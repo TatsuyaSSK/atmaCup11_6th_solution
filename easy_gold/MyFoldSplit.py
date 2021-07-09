@@ -1,0 +1,492 @@
+import sys
+from calendar import month_name
+
+import pandas as pd
+from matplotlib import pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import TimeSeriesSplit, StratifiedKFold, GroupKFold, KFold
+from pandas.plotting import register_matplotlib_converters
+register_matplotlib_converters()
+from dateutil.relativedelta import relativedelta
+from utils import *
+
+
+
+
+class DummyKfold():
+    def __init__(self, n_splits, random_state):
+        self.n_splits = n_splits
+        self.random_state = random_state
+
+
+    def split(self, _df_X, _df_y, _group, *args, **kwargs):
+
+        # num_data = len(_df_X)
+        # idx_list = np.arange(num_data)
+        # kf = KFold(n_splits=self.n_splits, random_state=self.random_state, shuffle=True)
+
+
+
+        for i in range(self.n_splits):
+        #     print("TRAIN:", train_index, "TEST:", test_index)
+
+        #     yield train_index, test_index
+            yield [0], [0]
+            
+
+
+class SeasonKFold():
+    """時系列情報が含まれるカラムでソートした iloc を返す KFold"""
+
+    def __init__(self, n_splits, ts_column="Season", clipping=False, num_seasons=5,*args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 時系列データのカラムの名前
+        self.ts_column = ts_column
+        # 得られる添字のリストの長さを過去最小の Fold に揃えるフラグ
+        self.clipping = clipping
+        
+        self.num_seasons = num_seasons
+        
+        self.n_splits = n_splits
+
+    def split(self, X, *args, **kwargs):
+        # 渡されるデータは DataFrame を仮定する
+        assert isinstance(X, pd.DataFrame)
+
+        # clipping が有効なときの長さの初期値
+        train_fold_min_len, test_fold_min_len = sys.maxsize, sys.maxsize
+
+        # 時系列のカラムを取り出す
+        ts = X[self.ts_column]
+        # 元々のインデックスを振り直して iloc として使える値 (0, 1, 2...) にする
+        ts_df = ts.reset_index()
+        
+        ts_list = sorted(ts_df[self.ts_column].unique())
+        
+
+        
+        for i in range(self.n_splits):
+            # 添字を元々の DataFrame の iloc として使える値に変換する
+            
+            
+           
+            
+            train_list = ts_list[:-self.num_seasons]
+            test_list= ts_list[-self.num_seasons:]
+            print(f"train season: {train_list}")
+            print(f"test season: {test_list}")
+            #pdb.set_trace()
+            
+            train_iloc_index = ts_df.loc[ts_df[self.ts_column].isin(train_list)].index
+            test_iloc_index = ts_df.loc[ts_df[self.ts_column].isin(test_list)].index
+
+            
+            ts_list = train_list
+            
+            if self.clipping:
+                # TimeSeriesSplit.split() で返される Fold の大きさが徐々に大きくなることを仮定している
+                train_fold_min_len = min(train_fold_min_len, len(train_iloc_index))
+                test_fold_min_len = min(test_fold_min_len, len(test_iloc_index))
+
+            yield list(train_iloc_index[-train_fold_min_len:]), list(test_iloc_index[-test_fold_min_len:])
+
+class TournamentGroupKFold(GroupKFold):
+    
+    def __init__(self, group_id_col="Season", day_num_col="DayNum",tournament_start_daynum=133, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.group_id_col = group_id_col
+        self.day_num_col = day_num_col
+        self.tournament_start_daynum = tournament_start_daynum
+
+        
+    def split(self, _df_X, _df_y, _group, *args, **kwargs):
+        
+        
+        df_tournament = _df_X.loc[_df_X[self.day_num_col]>=self.tournament_start_daynum]
+        df_tournament_y = _df_y.loc[df_tournament.index]
+        df_reg = _df_X.loc[~_df_X.index.isin(df_tournament.index)]
+        
+        reg_index = _df_X.index.get_indexer(df_reg.index).tolist()
+        
+
+        
+        if _group is None:
+            _group = df_tournament[self.group_id_col]
+
+        for train_id_index, test_id_index in super().split(df_tournament, df_tournament_y, _group):
+            
+              
+            # print(f"train_id_index:{train_id_index}")
+            # print(f"test_id_index:{test_id_index}")
+            # print(f"train season: {df_tournament.iloc[train_id_index]['Season'].unique()}")
+            # print(f"test season: {df_tournament.iloc[test_id_index]['Season'].unique()}")
+            
+            train_set_ID = df_tournament.iloc[train_id_index].index
+            test_set_ID = df_tournament.iloc[test_id_index].index
+            
+            train_index_list = _df_X.index.get_indexer(train_set_ID).tolist()
+            test_index_list = _df_X.index.get_indexer(test_set_ID).tolist()
+
+            
+            yield train_index_list+reg_index, test_index_list
+
+   
+    
+    
+
+
+class VirtulTimeStampSplit():
+    
+    def __init__(self, n_splits, num_valid=2500000):
+        self.num_valid = num_valid
+        self.n_splits = n_splits
+    
+    def split_melt(self, _df_X, _df_y, _group):
+        
+        cpu_stats(f"in split")
+
+        row_id_sequence =  _df_X.index.tolist()
+        row_id_list = _df_X.index.unique().tolist()
+        #print(row_id_list)
+
+        all_train_idx = range(len(_df_X))
+
+        print(f"row_id_sequence : {sys.getsizeof(row_id_sequence)}")
+        print(f"row_id_list : {sys.getsizeof(row_id_list)}")
+        print(f"all_train_idx : {sys.getsizeof(all_train_idx)}")
+        cpu_stats(f"after creating all_train_idx")
+        
+        for n in range(self.n_splits):
+            
+
+            
+            valid_row_id_list = row_id_list[-self.num_valid:]
+            first_valid_row_id = valid_row_id_list[0]
+            valid_id_from = row_id_sequence.index(first_valid_row_id)
+            valid = all_train_idx[valid_id_from:]
+
+            cpu_stats(f"mid yield")
+
+            row_id_list = row_id_list[:-self.num_valid]
+            all_train_idx = all_train_idx[:valid_id_from]#_df_X.index.get_loc(row_id_list)
+
+            
+            print(f"fold : {n}")
+            print(f"train : {len(all_train_idx)},  {all_train_idx}")
+            print(f"valid : {len(valid)},  {valid}")
+            cpu_stats(f"before yield")
+            
+            yield all_train_idx, valid
+
+    def split(self, _df_X, _df_y, _group):
+
+        all_train_idx = range(len(_df_X))
+        
+        for n in range(self.n_splits):
+            
+            valid = all_train_idx[-self.num_valid:]
+            all_train_idx = all_train_idx[:-self.num_valid]
+
+            print(f"fold : {n}")
+            print(f"train : {len(all_train_idx)},  {all_train_idx}")
+            print(f"valid : {len(valid)},  {valid}")
+            
+            yield all_train_idx, valid
+
+            
+            
+        
+    
+
+class TimeStampNewUserSplit(GroupKFold):
+    
+    def __init__(self, group_id_col, new_user_head_num=10, old_user_tail_num=10, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.group_id_col = group_id_col
+        self.new_user_head_num = new_user_head_num
+        self.old_user_tail_num = old_user_tail_num
+        
+    def split(self, _df_X, _df_y, _group, *args, **kwargs): # we assume df has already been sorted by timestamp
+
+        df = _df_X[[self.group_id_col]]
+        df[_df_y.columns] = _df_y
+        df = df.reset_index()
+        
+        if _group is None:
+            _group = df[self.group_id_col]
+        
+        fold_idx=1
+        for old_id_index, new_id_index in super().split(df[self.group_id_col], df[_df_y.columns], _group):
+            
+              
+            test_new_user_index = set(df.iloc[new_id_index].groupby(self.group_id_col).head(self.new_user_head_num).index)
+            test_old_user_index = set(df.iloc[old_id_index].groupby(self.group_id_col).tail(self.old_user_tail_num).index)
+            
+            #print(f"test_new_user : {len(test_new_user)}, test_old_user : {len(test_old_user)}")
+            #print(f"test_new_user : {len(test_new_user_index)}, test_old_user : {len(test_old_user_index)}")
+            #print(f"train_old_user_index ; {len(train_old_user_index)}, add : {len(train_old_user_index) + len(test_old_user_index)}")
+            #print(f"old_id_index : {len(old_id_index)}, new_id_index : {len(new_id_index)}")
+            
+            #print( df.iloc[new_id_index].groupby(self.group_id_col).head(self.new_user_head_num))
+            #print(f"{df.iloc[test_old_user_index].groupby(self.group_id_col).count()}")
+            
+            
+            cpu_stats(f"TimeStampNewUserSplit")
+            fold_idx+=1
+            
+            yield list(set(old_id_index) - test_old_user_index), list(test_new_user_index|test_old_user_index)
+
+   
+            
+        
+        
+    
+
+class StratifiedKFoldWithGroupID(StratifiedKFold):
+
+    def __init__(self, group_id_col, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.group_id_col = group_id_col
+
+    def split(self, _df_X, _se_y, _group, *args, **kwargs):
+
+        #_df_X["group_target"] = _se_y
+        df = _df_X[[self.group_id_col]]
+        df["group_target"] = _se_y
+        df = df.reset_index()
+        gp = df.groupby(self.group_id_col)["group_target"].agg(pd.Series.mode)
+        #print(gp)
+        #print(gp.index)
+        #del df
+        #gc.collect()
+
+        fold_idx=1
+        for train_id_index, test_id_index in super().split(gp.index, gp,  _group):
+            #print(f"fold_idx : {fold_idx}")
+            #print(f"train_id_index : {train_id_index}, test_id_index : {test_id_index}")
+            #print(f"train_id : {gp.index[train_id_index]}, test_id : {gp.index[test_id_index]}")
+            train_id_list = list(gp.index[train_id_index])
+            test_id_list = list(gp.index[test_id_index])
+
+            print(f"fold train :{df.loc[df[self.group_id_col].isin(train_id_list), 'group_target'].value_counts()}")
+            print(f"fold valid :{df.loc[df[self.group_id_col].isin(test_id_list), 'group_target'].value_counts()}")
+
+            #print(f"train_seq_id : {df.loc[df[self.group_id_col].isin(train_id_list)].index}, test_id : {df.loc[df[self.group_id_col].isin(test_id_list)].index}")
+            fold_idx+=1
+
+            yield list(df.loc[df[self.group_id_col].isin(train_id_list)].index), list(df.loc[df[self.group_id_col].isin(test_id_list)].index)
+
+        
+
+def testStr():
+
+    dict_pd = {
+        "seq_id":["id0_0", "id0_1", "id0_2", "id0_3", "id1_0", "id1_1", "id1_2", "id1_3", "id2_0", "id2_1", "id2_2", "id2_3", "id3_0", "id3_1", "id3_2", "id3_3"],
+        "val":[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "id":["id0", "id0", "id0", "id0", "id1", "id1", "id1", "id1", "id2", "id2", "id2", "id2", "id3", "id3", "id3", "id3"],
+        "cat_y":[0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1,]
+    }
+
+    df = pd.DataFrame(dict_pd)
+    df = df.set_index("seq_id")
+    print(df)
+
+    fold = StratifiedKFoldWithGroupID(n_splits=2, group_id_col="id")
+
+    for tr_idx, vl_idx in fold.split(df, df["cat_y"], None):
+        print(f"tr_idx : {tr_idx}, vl_idx : {vl_idx}")
+
+class Day28KFold(TimeSeriesSplit):
+    def __init__(self, date_column, clipping=False, test_days=28, split_type=1, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 時系列データのカラムの名前
+        self.date_column = date_column
+        # 得られる添字のリストの長さを過去最小の Fold に揃えるフラグ
+        self.clipping = clipping
+
+        self.test_days = test_days
+
+        self.split_type= split_type
+
+    def split(self, _X, _y, _group, *args, **kwargs):
+        # 渡されるデータは DataFrame を仮定する
+        assert isinstance(_X, pd.DataFrame)
+        X = _X[self.date_column].reset_index()
+
+        # clipping が有効なときの長さの初期値
+        train_fold_min_len, test_fold_min_len = sys.maxsize, sys.maxsize
+
+        # 時系列のカラムを取り出す
+        time_duration_list = X[self.date_column].unique()
+        #print(f"time_duration_list : {time_duration_list}")
+        ts_df = pd.DataFrame(time_duration_list, columns=[self.date_column])
+        #print(ts_df)
+
+
+
+        # 元々のインデックスを振り直して iloc として使える値 (0, 1, 2...) にする
+        #ts_df = ts.reset_index()
+        # 時系列でソートする
+        sorted_ts_df = ts_df.sort_values(by=self.date_column)
+
+        del ts_df
+        gc.collect()
+        
+        # スーパークラスのメソッドで添字を計算する
+        fold_idx=1
+        for train_index, test_index in super().split(sorted_ts_df, *args, **kwargs):
+            # 添字を元々の DataFrame の iloc として使える値に変換する
+
+            if self.split_type==1:
+
+                train_start_day = sorted_ts_df.iloc[train_index].min()[0]
+                test_end_day = sorted_ts_df.iloc[test_index].max()[0]
+                test_start_day = test_end_day - relativedelta(days=(self.test_days - 1))
+                train_end_day = test_start_day - relativedelta(days=1)
+            
+            elif self.split_type == 2:
+
+                last_day=sorted_ts_df[self.date_column].max()
+                test_start_day = last_day - relativedelta(days=(self.test_days - 1) * fold_idx)
+                test_end_day = test_start_day + relativedelta(days=(self.test_days - 1))
+                train_end_day = test_start_day - relativedelta(days=1)
+                train_start_day = sorted_ts_df[self.date_column].min()
+                print(f"last_day :{last_day}")
+
+
+
+            train_iloc_index = X[X[self.date_column] <= train_end_day].index
+            test_iloc_index = X[(X[self.date_column] >= test_start_day) & (X[self.date_column] <= test_end_day)].index
+
+            print(f"train {train_start_day} to {train_end_day}")
+            print(f"test {test_start_day} to {test_end_day}")
+
+            
+
+            if self.clipping:
+                # TimeSeriesSplit.split() で返される Fold の大きさが徐々に大きくなることを仮定している
+                train_fold_min_len = min(train_fold_min_len, len(train_iloc_index))
+                test_fold_min_len = min(test_fold_min_len, len(test_iloc_index))
+
+                print(f"train_fold_min_len : {train_fold_min_len}")
+                print(f"test_fold_min_len : {test_fold_min_len}")
+
+            print("********************")
+            fold_idx+=1
+            yield list(train_iloc_index[-train_fold_min_len:]), list(test_iloc_index[-test_fold_min_len:])
+
+
+
+
+        
+
+class MovingWindowKFold(TimeSeriesSplit):
+    """時系列情報が含まれるカラムでソートした iloc を返す KFold"""
+
+    def __init__(self, ts_column, clipping=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 時系列データのカラムの名前
+        self.ts_column = ts_column
+        # 得られる添字のリストの長さを過去最小の Fold に揃えるフラグ
+        self.clipping = clipping
+
+    def split(self, X, *args, **kwargs):
+        # 渡されるデータは DataFrame を仮定する
+        assert isinstance(X, pd.DataFrame)
+
+        # clipping が有効なときの長さの初期値
+        train_fold_min_len, test_fold_min_len = sys.maxsize, sys.maxsize
+
+        # 時系列のカラムを取り出す
+        ts = X[self.ts_column]
+        # 元々のインデックスを振り直して iloc として使える値 (0, 1, 2...) にする
+        ts_df = ts.reset_index()
+        # 時系列でソートする
+        sorted_ts_df = ts_df.sort_values(by=self.ts_column)
+        # スーパークラスのメソッドで添字を計算する
+        for train_index, test_index in super().split(sorted_ts_df, *args, **kwargs):
+            # 添字を元々の DataFrame の iloc として使える値に変換する
+            train_iloc_index = sorted_ts_df.iloc[train_index].index
+            test_iloc_index = sorted_ts_df.iloc[test_index].index
+
+            if self.clipping:
+                # TimeSeriesSplit.split() で返される Fold の大きさが徐々に大きくなることを仮定している
+                train_fold_min_len = min(train_fold_min_len, len(train_iloc_index))
+                test_fold_min_len = min(test_fold_min_len, len(test_iloc_index))
+
+            yield list(train_iloc_index[-train_fold_min_len:]), list(test_iloc_index[-test_fold_min_len:])
+
+
+def main():
+    df = sns.load_dataset('flights')
+
+    month_name_mappings = {name: str(n).zfill(2) for n, name in
+                           enumerate(month_name)}
+    df['month'] = df['month'].apply(lambda x: month_name_mappings[x])
+    df['year-month'] = df.year.astype(str) + '-' + df.month.astype(str)
+    df['year-month'] = pd.to_datetime(df['year-month'], format='%Y-%m')
+
+    # データの並び順をシャッフルする
+    df = df.sample(frac=1.0, random_state=42)
+
+    # 特定のカラムを時系列としてソートした分割
+    folds = MovingWindowKFold(ts_column='year-month', n_splits=5)
+
+    fig, axes = plt.subplots(5, 1, figsize=(12, 12))
+
+    # 元々のデータを時系列ソートした iloc が添字として得られる
+    for i, (train_index, test_index) in enumerate(folds.split(df)):
+        print(f'index of train: {train_index}')
+        print(f'index of test: {test_index}')
+        print('----------')
+        sns.lineplot(data=df, x='year-month', y='passengers', ax=axes[i], label='original')
+        sns.lineplot(data=df.iloc[train_index], x='year-month', y='passengers', ax=axes[i], label='train')
+        sns.lineplot(data=df.iloc[test_index], x='year-month', y='passengers', ax=axes[i], label='test')
+
+    plt.legend()
+    #plt.show()
+
+    path_to_save = os.path.join(str(PATH_TO_GRAPH_DIR), datetime.now().strftime("%Y%m%d%H%M%S") + "_MovingWindowKFold.png")
+    plt.savefig(path_to_save)
+
+def main2():
+
+    df_train = pd.read_pickle(PROC_DIR / 'df_proc_train.pkl')
+
+    folds = Day28KFold(date_column='date', n_splits=5)
+
+    fig, axes = plt.subplots(5, 1, figsize=(12, 12))
+
+    
+    #df = df_train.loc[df_train["id"]=="HOBBIES_1_008_CA_1_validation", ["date", "demand"]]
+    df = df_train[["date", "demand"]]
+
+    # 元々のデータを時系列ソートした iloc が添字として得られる
+    for i, (train_index, test_index) in enumerate(folds.split(df)):
+
+        df_tr = df.iloc[train_index, :]
+        df_val = df.iloc[test_index, :]
+        train_min = df_tr["date"].min()
+        train_max = df_tr["date"].max()
+        test_min = df_val["date"].min()
+        test_max = df_val["date"].max()
+
+        print(f"train : {train_min} to {train_max}")
+        print(f"test : {test_min} to {test_max}")
+
+        print(f'index of train: {len(train_index)}')
+        print(f'index of test: {len(test_index)}')
+        print('----------')
+    #     sns.lineplot(data=df, x='date', y='demand', ax=axes[i], label='original')
+    #     sns.lineplot(data=df.iloc[train_index], x='date', y='demand', ax=axes[i], label='train')
+    #     sns.lineplot(data=df.iloc[test_index], x='date', y='demand', ax=axes[i], label='test')
+
+    # plt.legend()
+    # #plt.show()
+
+    # path_to_save = os.path.join(str(PATH_TO_GRAPH_DIR), datetime.now().strftime("%Y%m%d%H%M%S") + "_Day28KFold.png")
+    # plt.savefig(path_to_save)
+
+if __name__ == '__main__':
+    testStr()

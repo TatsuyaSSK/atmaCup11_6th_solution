@@ -13,6 +13,11 @@ from sklearn.linear_model import ElasticNet, Lasso, BayesianRidge, LassoLarsIC, 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVR
 from catboost import CatBoostRegressor
+from abc import ABCMeta, abstractmethod
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
+
 
 
 
@@ -20,8 +25,8 @@ from catboost import CatBoostRegressor
 # from deeptables.models.deepnets import WideDeep
 # from deeptables.models.layers import MultiColumnEmbedding, dt_custom_objects
 # from deeptables.utils import consts
-import tensorflow as tf
-from tensorflow.keras.models import load_model
+#import tensorflow as tf
+#from tensorflow.keras.models import load_model
 
 from DNNmodel import *
 import cloudpickle
@@ -39,37 +44,7 @@ my_logger = MyLogger()
 logger = my_logger.generateLogger("model_wrapper", LOG_DIR+"/model_wrapper.log").getChild(__file__)
 
 
-def calcBatchMeanEvalScoreDictFromEvalScoreDictList(eval_score_dict_list):
 
-
-    batch_mean_eval_score_dict={}
-    for eval_score_dict in eval_score_dict_list:
-
-        for name, score in eval_score_dict.items():
-            if name in batch_mean_eval_score_dict.keys():
-                batch_mean_eval_score_dict[name].append(eval_score_dict[name])
-            else:
-                batch_mean_eval_score_dict[name] = [eval_score_dict[name]]
-    
-    for name in batch_mean_eval_score_dict.keys():
-        batch_mean_eval_score_dict[name] = np.array(batch_mean_eval_score_dict[name]).mean()
-    
-    return batch_mean_eval_score_dict
-
-
-
-def calcEvalScoreDict(y_true, y_pred, eval_metric_func_dict):
-    #print("y_true")
-    #print(np.unique(y_true, return_counts=True))
-    #print("y_pred")
-    #print(np.unique(y_pred, return_counts=True))
-
-    eval_score_dict={}
-    for name, f in eval_metric_func_dict.items():
-        score  = f(y_pred=y_pred, y_true=y_true)
-        eval_score_dict[name] = score
-    
-    return eval_score_dict
 
 def extractModelParameters(original_param, model):
     
@@ -451,18 +426,357 @@ def show_cuda(text=None):
     print('Allocated:', round(torch.cuda.memory_allocated()/1024**3,1), 'GB')
     print('Cached:   ', round(torch.cuda.memory_reserved()/1024**3,1), 'GB')
 
+class PytrochLightningBase():
+
+    def __init__(self):
+        super().__init__()
+
+        self.initial_params = {
+                #""'early_stopping_rounds':50,
+                #""'lr':0.001,#0.01,#0.005,
+                #"batch_size":64 * 4,
+                #"epochs":10000,
+                #"loss_criterion_function": {"name":"mse", "func": my_loss_func},#nn.BCEWithLogitsLoss()} , #
+    
+                #"eval_metric":"val_MPE",
+                "eval_max_or_min": "min",
+                "val_every":1,
+                "dataset_params":{},
+                "random_seed_name__":"random_state",
+                'num_class':1, #binary classification as regression with value between 0 and 1
+                "use_gpu":1,
+                'multi_gpu':False,
+                }
+        self.edit_params = {}
+
+        self.best_iteration_ = 1
+
+        
+
+        self.model = None
+    #     self.setModel()
+
+    # @abstractmethod
+    # def setModel(self):
+    #     pass  # あるいは raise NotImplementedError()
+
+
+
+
+    def fit(self, X_train, y_train, X_valid=None, y_valid=None, X_holdout=None, y_holdout=None, params=None):
+
+        params = prepareModelDir(params, self.__class__.__name__)
+
+        self.edit_params = params
+        pl.seed_everything(params[params["random_seed_name__"]]) 
+        torch.backends.cudnn.enabled = True
+
+        self.model.setParams(params)
+
+        # def init_weights2(m):
+        #     initrange = 0.1
+        #     #print(f"m : {m}, type:{type(m)}")
+        #     if type(m) == nn.Linear:
+        #         m.weight.data.uniform_(-initrange, initrange)
+
+        #         #m.weight.fill_(1.0)
+        #         #print(m.weight)
+        # self.model.apply(init_weights2)
+
+        batch_size = params["batch_size"]
+        if batch_size < 0:
+            batch_size = X_train.shape[0]
+
+
+        data_set_train = params["dataset_class"](X_train, y_train, params["dataset_params"], train_flag=True)
+        dataloader_train = torch.utils.data.DataLoader(data_set_train, batch_size=batch_size, shuffle=True, collate_fn=params["collate_fn"],num_workers=params["num_workers"]) #, sampler=ImbalancedDatasetSampler(data_set_train))
+        
+
+        dataloader_val = None
+        if X_valid is not None:
+            data_set_val = params["dataset_class"](X_valid, y_valid, params["dataset_params"], train_flag=True)
+            dataloader_val = torch.utils.data.DataLoader(data_set_val, batch_size=batch_size, shuffle=False, collate_fn=params["collate_fn"],num_workers=params["num_workers"])
+
+
+        wandb_logger=None
+        if (not ON_KAGGLE) and (params["no_wandb"]==False):
+            #wandb.init(config=params)
+            wandb_run = wandb.init(project=PROJECT_NAME, group=params["wb_group_name"], reinit=True, name=params["wb_run_name"] )
+            wandb_logger = WandbLogger(experment=wandb_run)
+            wandb_logger.log_hyperparams(params)
+            #
+            #wandb.config.update(params,  allow_val_change=True)
+            #wandb.watch(self.model, criterion, log=None)
+
+
+        early_stop_callback = EarlyStopping(
+                                monitor=f'val_{params["eval_metric"]}',
+                                min_delta=0.00,
+                                patience=params['early_stopping_rounds'],
+                                verbose=True,
+                                mode=params['eval_max_or_min']
+                            )
+
+        checkpoint_callback = ModelCheckpoint(
+                                dirpath=PATH_TO_MODEL_DIR / params["model_dir_name"],
+                                filename=params["path_to_model"].stem,
+                                verbose=True,
+                                monitor=f'val_{params["eval_metric"]}',                                
+                                mode=params['eval_max_or_min'],
+                                save_weights_only=True,
+                                )
+
+        self.trainer = pl.Trainer(
+                        num_sanity_val_steps=0,
+                        gpus=self.initial_params["use_gpu"], 
+                        check_val_every_n_epoch=self.initial_params["val_every"],
+                        max_epochs=self.initial_params["epochs"],
+                        callbacks=[early_stop_callback, checkpoint_callback],
+                        logger=wandb_logger,  
+
+        )   
+
+        self.trainer.fit(self.model, dataloader_train, dataloader_val)
+
+        # if X_valid is not None:
+        #     print(checkpoint_callback.best_model_path)
+        #     self.model.load_state_dict(torch.load(checkpoint_callback.best_model_path), strict=False) #self.model.load_from_checkpoint(checkpoint_path=checkpoint_callback.best_model_path)
+        #     #self.model.load_state_dict(torch.load(str(params["path_to_model"])+".ckpt"))
+        # else:
+        if X_valid is None:
+            self.trainer.save_checkpoint(str(params["path_to_model"]))
+            #torch.save(self.model.state_dict(), str(params["path_to_model"])+".ckpt")
+
+
+        self.best_score_, self.best_iteration_, _ = self.model.getScoreInfo()
+        logger.debug(self.best_score_)
+        
+        self.feature_importances_ = np.zeros(len(X_train.columns))
+        #self.best_iteration_ = best_epoch#self.model.best_iteration_
+
+        #if wandb_logger is not None:
+            #wandb_logger.finalize("success")
+            #wandb.finish()
+
+    def predict(self, X_test, oof_flag=False):
+
+        batch_size=self.edit_params["batch_size"] if oof_flag else 1 #
+        dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
+        data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=False)
+        dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=batch_size, shuffle=False, collate_fn=self.edit_params["collate_fn"],num_workers=self.edit_params["num_workers"])
+        
+        self.model.oof_prediction = oof_flag
+        if self.model.oof_prediction==False:
+            self.trainer.logger = None 
+        self.trainer.test(test_dataloaders=dataloader_test, ckpt_path='best')
+        final_preds = self.model.final_preds
+
+        #pdb.set_trace()
+
+        return final_preds
+
+    def procModelSaving(self, model_dir_name, prefix, bs):
+
+        ppath_to_save_dir = PATH_TO_MODEL_DIR / model_dir_name
+        if not ppath_to_save_dir.exists():
+            ppath_to_save_dir.mkdir()
+            
+        ppath_to_model = ppath_to_save_dir / f"model__{prefix}__{model_dir_name}__{self.__class__.__name__}.pkl"
+        torch.save(self.model.state_dict(), str(ppath_to_model))
+
+        print(f'Trained nn model was saved! : {ppath_to_model}')
+        
+        with open(str(ppath_to_model).replace("model__", "bs__").replace("pkl", "json"), 'w') as fp:
+            json.dump(bs, fp)
+
+class ResNet_Wrapper(PytrochLightningBase):
+    def __init__(self):
+        
+        super().__init__()
+        
+        self.initial_params["dataset_class"] = MyDatasetResNet
+        self.initial_params["collate_fn"] = None #collate_fn_Transformer
+
+        self.initial_params["dataset_params"] = {}
+        
+        self.model = myResNet()
+
+class LastQueryTransformer_Wrapper(PytrochLightningBase):
+    def __init__(self,
+                #f_all, 
+                sequence_features_list, 
+                continuous_features_list,
+                max_seq=1,
+                #ninp=32,
+                # nhead=1,
+                # nhid=32,
+                # nlayers=1,
+                # dropout=0.1,
+                pad_num=0,
+                last_query_flag=False,
+                ):
+
+
+        super().__init__()
+
+        bssid_features_list = getColumnsFromParts(["wb_"], sequence_features_list)
+        fq_features_list = getColumnsFromParts(["wifi_frequency_"], sequence_features_list)
+
+        self.initial_params["dataset_class"] = MyDatasetTransformer
+        self.initial_params["collate_fn"] = None #collate_fn_Transformer
+
+        self.initial_params["dataset_params"] = {
+            "sequence_features_list":sequence_features_list, 
+            "continuous_features_list":continuous_features_list,
+            "bssid_features_list":bssid_features_list,
+            "fq_features_list":fq_features_list,
+            "last_query_flag":last_query_flag,
+            "max_seq":max_seq,
+            "pad_num":pad_num,
+            "label_col":["x", "y", "floor"],
+
+        }
+
+        seq_dim_pairs_list = []
+        print("sequence_features_list")
+        for col in sequence_features_list:
+            # if "wb_" in col:
+            #     #dim = 29241 #29634
+            #     #emb_dim = ninp
+            #     continue
+            # elif "wifi_frequency_" in col:
+            #     continue
+            if col == "site_id":
+                dim = 24
+                emb_dim = 2
+            elif col == "site_floor":
+                dim = 139+1
+                emb_dim = 70
+            else:
+                continue
+            #dim = int(df_all[col].nunique())
+            pair = (dim, emb_dim)
+            seq_dim_pairs_list.append(pair)
+            print("{} : {}".format(col, pair))
+        
+
+        self.model = SimpleTransformer(#LastLSTM(#LastQueryTransformer( #
+                            n_numerical_features=len(continuous_features_list), 
+                            emb_dim_pairs_list=seq_dim_pairs_list,
+                            num_bssid_features=len(bssid_features_list),
+                            num_fq_features=len(fq_features_list),
+                            last_query_flag=last_query_flag,
+                            
+                            )
+
+
+class LastQueryLSTM(PytrochLightningBase):
+    def __init__(self,
+                #f_all, 
+                sequence_features_list, 
+                continuous_features_list,
+                weight_list,
+                gl_norm_dict,
+                max_seq=5,
+                #ninp=32,
+                # nhead=1,
+                # nhid=32,
+                # nlayers=1,
+                # dropout=0.1,
+                pad_num=0,
+                last_query_flag=False,
+                ):
+
+
+        super().__init__()
+
+
+        self.initial_params["dataset_class"] = MyDatasetLSTM2
+        self.initial_params["collate_fn"] = None #collate_fn_Transformer
+        
+        use_feature_cols = sequence_features_list+continuous_features_list
+
+        self.initial_params["dataset_params"] = {
+            "sequence_features_list":sequence_features_list, 
+            "continuous_features_list":continuous_features_list,
+            "weight_list":weight_list,
+            "use_feature_cols":use_feature_cols,
+            "last_query_flag":last_query_flag,
+            "max_seq":max_seq,
+            "pad_num":pad_num,
+            "label_col":["x", "y"],
+
+        }
+
+        prev_renew_cols = ["prev_x", "prev_y", "cum_rel_x", "cum_rel_y", "next_x", "next_y"]
+        prev_renew_idx = [use_feature_cols.index(c) for c in prev_renew_cols]
+        prev_renew_col_idx_dict = dict(zip(prev_renew_cols, prev_renew_idx))
+       
+
+        seq_dim_pairs_list = []
+        print("sequence_features_list")
+        for col in sequence_features_list:
+            # if "wb_" in col:
+            #     #dim = 29241 #29634
+            #     #emb_dim = ninp
+            #     continue
+            # elif "wifi_frequency_" in col:
+            #     continue
+            if col == "floor":
+                dim = gl_norm_dict["n_floor"]
+                emb_dim = dim//2
+            elif col == "site_id":
+                dim = 24
+                emb_dim = 12
+
+            elif col == "site_floor":
+                dim = 139+1
+                emb_dim = 70
+            else:
+                continue
+            #dim = int(df_all[col].nunique())
+            pair = (dim, emb_dim)
+            seq_dim_pairs_list.append(pair)
+            print("{} : {}".format(col, pair))
+        
+
+        self.model = LastLSTM(#LastQueryTransformer( #
+                            n_numerical_features=len(continuous_features_list), 
+                            emb_dim_pairs_list=seq_dim_pairs_list,
+                            last_query_flag=last_query_flag,
+                            prev_renew_col_idx_dict=prev_renew_col_idx_dict,
+                            
+                            )
+
+
+def prepareModelDir(params, prefix):
+
+        ppath_to_save_dir = PATH_TO_MODEL_DIR / params["model_dir_name"]
+        if not ppath_to_save_dir.exists():
+            ppath_to_save_dir.mkdir()
+
+        params["path_to_model"] = ppath_to_save_dir / f"{prefix}_train_model.ckpt"
+
+        return params
+
 class DNN_Wrapper_Base(object):
 
 
     def __init__(self):
         self.model = None
 
-        loss_f = nn.BCELoss()#nn.BCEWithLogitsLoss()
+        loss_f = nn.MSELoss()
         def my_loss_func(y_true, y_pred):
             
+            #print(f"y_true:{y_true}")
+            #print(f"y_pred:{y_pred}")
+            
+            #print(f"y_true:{y_true.shape}")
+            #print(f"y_pred:{y_pred.shape}")
             
             #import pdb; pdb.set_trace()
-            return loss_f(y_pred.float(), y_true.float())
+            return loss_f(y_pred[:, :2].float(), y_true[:, :2].float()) ##+ loss_f(y_pred[:, 2:].float(), y_true[:, 2:].float())
+            #return loss_f(y_pred.float(), y_true.float())
 
         
         self.initial_params = {
@@ -470,27 +784,33 @@ class DNN_Wrapper_Base(object):
                 #""'lr':0.001,#0.01,#0.005,
                 #"batch_size":64 * 4,
                 #"epochs":10000,
-                "loss_criterion_function": {"name":"bce", "func": my_loss_func},#nn.BCEWithLogitsLoss()} , #
+                "loss_criterion_function": {"name":"mse", "func": my_loss_func},#nn.BCEWithLogitsLoss()} , #
     
-                "eval_metric":"AUC",
-                "eval_up":True,
+                "eval_metric":"MPE",
+                "eval_up":False,
                 "val_every":1,
                 "dataset_params":{},
                 "random_seed_name__":"random_state",
                 'num_class':1, #binary classification as regression with value between 0 and 1
-                'multi_gpu':True,
+                'multi_gpu':False,
                 }
         self.edit_params = {}
 
         self.best_iteration_ = 1
 
+    
+
+
     def fit(self, X_train, y_train, X_valid=None, y_valid=None, X_holdout=None, y_holdout=None, params=None):
+
+        params = prepareModelDir(params, self.__class__.__name__)
+
         self.edit_params = params
         torch.manual_seed(params[params["random_seed_name__"]]) 
         torch.backends.cudnn.enabled = True
 
 
-
+        
 
         
 
@@ -545,7 +865,7 @@ class DNN_Wrapper_Base(object):
         else:
             last_score=10000000000000
 
-        if not ON_KAGGLE:
+        if (not ON_KAGGLE) and (params["no_wandb"]==False):
             #wandb.init(config=params)
             wandb.init(project=PROJECT_NAME, group=params["wb_group_name"], reinit=True, name=params["wb_run_name"] )
             wandb.config.update(params,  allow_val_change=True)
@@ -618,7 +938,7 @@ class DNN_Wrapper_Base(object):
             print_text = "Epoch {}, train_loss {}, ".format(i, train_loss)
             for name, score in score_dict["train"].items():
                 print_text += "train_{} {}, ".format(name, score)
-                if not ON_KAGGLE: 
+                if (not ON_KAGGLE) and (params["no_wandb"]==False):
                     wandb.log({name: score})
                 
             
@@ -665,7 +985,7 @@ class DNN_Wrapper_Base(object):
                     print_text += "{}_loss {}, ".format(val_hold_name, val_loss)
                     for name, score in score_dict[val_hold_name].items():
                         print_text += "{}_{} {}, ".format(val_hold_name, name, score)
-                        if not ON_KAGGLE: 
+                        if (not ON_KAGGLE) and (params["no_wandb"]==False):
                             wandb.log({name: score})
 
                 logger.debug(print_text)
@@ -740,7 +1060,7 @@ class DNN_Wrapper_Base(object):
 
         dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
         data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=False)
-        dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=X_test.shape[0], shuffle=False, collate_fn=self.edit_params["collate_fn"])
+        dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=self.edit_params["batch_size"], shuffle=False, collate_fn=self.edit_params["collate_fn"])
         
         final_preds = []#np.array([])
 
@@ -838,7 +1158,7 @@ class DNN_Wrapper(DNN_Wrapper_Base):
     def __init__(self, init_x_num):
         super().__init__()
         self.model = MyDNNmodel(init_x_num)
-        self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / "DNN_train_model.pkl"
+        #self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / "DNN_train_model.pkl"
         self.initial_params["dataset_class"] = MyDataset
         
 
@@ -862,7 +1182,7 @@ class EmbeddingDNN_Wrapper(DNN_Wrapper_Base):
         num_cont_features = len(continuous_features_list)
 
         self.model = EmbeddingDNN(emb_dim_pairs_list, num_cont_features, emb_dropout_rate)
-        self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / "DNN_Emb_train_model.pkl"
+        #self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / "DNN_Emb_train_model.pkl"
 
         self.initial_params["dataset_params"] = {
             "category_features_list":embedding_features_list, 
@@ -872,16 +1192,21 @@ class EmbeddingDNN_Wrapper(DNN_Wrapper_Base):
         self.initial_params["dataset_class"] = MyDatasetEmbedding
 
 
+
+
+
+
+
 class Transformer_Wrapper(DNN_Wrapper_Base):
     def __init__(self,
                 #f_all, 
                 sequence_features_list, 
                 continuous_features_list,
-                max_seq=1000,
-                ninp=128,
-                nhead=4,
-                nhid=128*2,
-                nlayers=6,
+                max_seq=100,
+                ninp=32,
+                nhead=1,
+                nhid=32,
+                nlayers=1,
                 dropout=0.1,
                 pad_num=0,
 
@@ -895,40 +1220,43 @@ class Transformer_Wrapper(DNN_Wrapper_Base):
 
 
         self.initial_params["dataset_class"] = MyDatasetTransformer
-        self.initial_params["collate_fn"] = collate_fn_Transformer
+        self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / "Transformer_train_model.pkl"
+        #self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / "Transformer_train_model.pkl"
 
         self.initial_params["dataset_params"] = {
             "sequence_features_list":sequence_features_list, 
             "continuous_features_list":continuous_features_list,
             "max_seq":max_seq,
             "pad_num":pad_num,
-            "label_col":"answered_correctly",
+            "label_col":["x", "y", "floor"],
 
         }
 
         seq_dim_pairs_list = []
         print("sequence_features_list")
         for col in sequence_features_list:
-            if col == "part":
-                dim = 7+1
-            elif col == "content_id":
-                dim = 13523
-            elif col == "prior_question_had_explanation":
-                dim = 2
-            elif col == "prev_answered_correctly_user_id":
-                dim = 2
-            elif col == "prev_answered_correctly_uid_cid":
-                dim=2
-            elif col == "prev_answered_correctly_uid_part_chunk":
-                dim = 2
+            if "wb_" in col:
+                dim = 29634
             
             
             #dim = int(df_all[col].nunique())
             pair = (dim, ninp)
             seq_dim_pairs_list.append(pair)
             print("{} : {}".format(col, pair))
+            
+        #pair = (44119+1, ninp)
+        #pair = (54433, ninp)
+        #pair = (61307+1, ninp)
+        #pair = (29634, ninp)
+
+        
+        
+        
+        seq_dim_pairs_list.append(pair)
+        
+        # pair = (24+1, ninp)
+        # seq_dim_pairs_list.append(pair)
 
         self.model = Transformer_DNN(ninp=ninp, nhead=nhead, nhid=nhid, nlayers=nlayers,
                 emb_dim_pairs_list=seq_dim_pairs_list, num_continuout_features=len(continuous_features_list), dropout=dropout,
@@ -936,61 +1264,61 @@ class Transformer_Wrapper(DNN_Wrapper_Base):
 
     
 
-    def predict(self, X_test):
+    # def predict(self, X_test):
 
-        dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
-        data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=False)
-        dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=X_test.shape[0], shuffle=False, collate_fn=self.edit_params["collate_fn"])
+    #     dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
+    #     data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=False)
+    #     dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=X_test.shape[0], shuffle=False, collate_fn=self.edit_params["collate_fn"])
         
-        final_preds_row_id = []
-        final_preds = []#np.array([])
-        #np.array([])
+    #     final_preds_row_id = []
+    #     final_preds = []#np.array([])
+    #     #np.array([])
 
-        self.model.eval()
-        with torch.no_grad():
-            for test_batch_x_list_, test_batch_y_dummy in dataloader_test:
-                test_batch_x_list = [b.cuda() for b in test_batch_x_list_]
-                #print(test_batch_x_list[0].shape)
+    #     self.model.eval()
+    #     with torch.no_grad():
+    #         for test_batch_x_list_, test_batch_y_dummy in dataloader_test:
+    #             test_batch_x_list = [b.cuda() for b in test_batch_x_list_]
+    #             #print(test_batch_x_list[0].shape)
 
-                y_pred_test = self.model(test_batch_x_list)
-                y_pred_test = y_pred_test.data.cpu().numpy()
+    #             y_pred_test = self.model(test_batch_x_list)
+    #             y_pred_test = y_pred_test.data.cpu().numpy()
 
-                # if self.initial_params["multi_gpu"]:
-                #     row_id = self.model.module.current_row_id.cpu().numpy()
-                # else:
-                #     row_id = self.model.current_row_id.cpu().numpy()
-                row_id = test_batch_x_list[-2]
-                src_key_padding_mask = test_batch_x_list[-1]
-                row_id = row_id[~src_key_padding_mask].data.cpu().numpy()
+    #             # if self.initial_params["multi_gpu"]:
+    #             #     row_id = self.model.module.current_row_id.cpu().numpy()
+    #             # else:
+    #             #     row_id = self.model.current_row_id.cpu().numpy()
+    #             row_id = test_batch_x_list[-2]
+    #             src_key_padding_mask = test_batch_x_list[-1]
+    #             row_id = row_id[~src_key_padding_mask].data.cpu().numpy()
 
-                #print(y_pred_test.shape)
-                final_preds.append(y_pred_test)
-                final_preds_row_id.append(row_id)
+    #             #print(y_pred_test.shape)
+    #             final_preds.append(y_pred_test)
+    #             final_preds_row_id.append(row_id)
                 
 
-                del test_batch_x_list_
-                del test_batch_x_list
-                del test_batch_y_dummy
-                torch.cuda.empty_cache()
-                gc.collect()
+    #             del test_batch_x_list_
+    #             del test_batch_x_list
+    #             del test_batch_y_dummy
+    #             torch.cuda.empty_cache()
+    #             gc.collect()
         
 
-        del dummy_y
-        del data_set_test
-        del dataloader_test
+    #     del dummy_y
+    #     del data_set_test
+    #     del dataloader_test
         
-        torch.cuda.empty_cache()
-        gc.collect()
+    #     torch.cuda.empty_cache()
+    #     gc.collect()
 
-        show_cuda("pred after del")
+    #     show_cuda("pred after del")
         
-        final_preds = np.concatenate(final_preds)
-        final_preds_row_id = np.concatenate(final_preds_row_id)
-        final_preds = pd.DataFrame(final_preds, index=final_preds_row_id)
+    #     final_preds = np.concatenate(final_preds)
+    #     final_preds_row_id = np.concatenate(final_preds_row_id)
+    #     final_preds = pd.DataFrame(final_preds, index=final_preds_row_id)
 
         
-        #import pdb; pdb.set_trace()
-        return final_preds
+    #     #import pdb; pdb.set_trace()
+    #     return final_preds
     
 
 
@@ -1040,7 +1368,7 @@ class LSTM_Wrapper(DNN_Wrapper_Base):
         self.model = LSTM_DNN(seq_dim_pairs_list, emb_dim_pairs_list, num_cont_features, num_target, emb_dropout=emb_dropout_rate)
 
         now = datetime.now().strftime("%Y%m%d_%H%M%S")  
-        self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / f"LSTM_train_model_{now}.pkl"
+        #self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / f"LSTM_train_model_{now}.pkl"
 
         self.initial_params["dataset_params"] = {
             "sequence_features_list":sequence_features_list, 
@@ -1142,8 +1470,8 @@ class Graph_Wrapper(DNN_Wrapper_Base):
                             num_classes=num_target)
 
 
-        now = datetime.now().strftime("%Y%m%d_%H%M%S")  
-        self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / f"Graph_train_model_{now}.pkl"
+        #now = datetime.now().strftime("%Y%m%d_%H%M%S")  
+        #self.initial_params["path_to_model"] = PATH_TO_MODEL_DIR / f"Graph_train_model_{now}.pkl"
 
         self.initial_params["dataset_params"] = {
             "node_feature_list":node_feature_list, 
@@ -1414,10 +1742,11 @@ class LGBWrapper_Base(object):
             
                 # 'early_stopping_rounds':50, #50,
                 # 'learning_rate': 0.1,#0.5,
-                # 'feature_fraction': 0.1, #col_sumple_by_tree for xgb
+                #'feature_fraction': 0.1, #col_sumple_by_tree for xgb
                 #'min_data_in_leaf' : 16, #min_child_weight for xgb
-                # 'bagging_fraction': 0.9, #subsample for xgb [0-1]
+                #'bagging_fraction': 0.9, #subsample for xgb [0-1]
                 
+
                 # 'reg_alpha': 0, #1, #alpha for xgb
                 # 'reg_lambda': 1, #lambda for xgb
                 # 'n_jobs': -1,
@@ -1436,18 +1765,31 @@ class LGBWrapper_Base(object):
                 'boosting_type': 'gbdt',
                 "random_seed_name__":"random_state",
                 "deal_numpy":False,
-
+                "first_metric_only": True,
                 
-                'max_depth': -1, #3,
-                'max_bin': 300,
-                'bagging_fraction': 0.95,#0.85,
-                'bagging_freq': 1, 
-                'colsample_bytree': 0.85,
-                'colsample_bynode': 0.85,
-                'min_data_per_leaf': 16,#5,#16,#25,
-                'num_leaves': 32, #3000, #700, #500, #400, #300, #120, #80,#300,
+                'max_depth': 10,
+                #'max_bin': 300,
+                #'bagging_fraction': 0.9,
+                #'bagging_freq': 1, 
+                'colsample_bytree': 0.9,
+                #'colsample_bylevel': 0.3,
+                #'min_data_per_leaf': 2,
+                "min_child_samples":2,
+                
+                'num_leaves': 300,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
                 'lambda_l1': 0.5,
                 'lambda_l2': 0.5,
+                
+                # 'max_depth': -1, #3,
+                # 'max_bin': 300,
+                # 'bagging_fraction': 0.95,#0.85,
+                # 'bagging_freq': 1, 
+                # 'colsample_bytree': 0.85,
+                # 'colsample_bynode': 0.85,
+                # 'min_data_per_leaf': 16,#5,#16,#25,
+                # 'num_leaves': 300,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
+                # 'lambda_l1': 0.5,
+                # 'lambda_l2': 0.5,
                 
                 # "num_leaves": 500,
                 # "max_depth": 13,
@@ -1507,7 +1849,7 @@ class LGBWrapper_Base(object):
 
 
         call_back_list = []
-        if not ON_KAGGLE:
+        if (not ON_KAGGLE) and (params["no_wandb"]==False):
             wandb.init(project=PROJECT_NAME, group=params["wb_group_name"], reinit=True, name=params["wb_run_name"] )
             wandb.config.update(params,  allow_val_change=True)
             call_back_list.append(wandb_callback())
@@ -1626,18 +1968,42 @@ class LGBWrapper_cls(LGBWrapper_Base):
         self.model = lgb.LGBMClassifier()
         #self.model = lgb
 
-        self.initial_params['objective'] = 'binary'
-        self.initial_params['metric'] = 'binary_logloss'
+        self.initial_params['objective'] = 'multiclass'
+        self.initial_params['num_class'] = 4
+        #self.initial_params['metric'] = 'binary_logloss'
         #self.initial_params['is_unbalance'] = True
 
+    def proc_predict(self, X_test, oof_flag=False):
+
+        if oof_flag:
+
+            pred = self.model.predict(X_test, num_iteration=self.model.best_iteration_)
+        else:
+            pred = self.model.predict_proba(X_test, num_iteration=self.model.best_iteration_)
+            
+            
+            # X_test["path"] = X_test.index.map(lambda x: x.split("_")[1])
+
+            # df_pred = X_test[["path"]]
+            # df_pred["floor"] = pred
+            # df_pred.groupby("path")["floor"].apply(lambda x: x.mode())
+
+            pdb.set_trace()
+        return pred
+
+
+
     #def predict_proba(self, X_test):
-    def predict(self, X_test):
+    def predict(self, X_test, oof_flag=False):
         if (self.model.objective == 'binary') :
             #print("X_test b:", X_test)
             #print("X_test:shape b", X_test.shape)
             return self.model.predict_proba(X_test, num_iteration=self.model.best_iteration_)[:, 1]
         else:
-            return self.model.predict_proba(X_test, num_iteration=self.model.best_iteration_)
+            #return self.model.predict_proba(X_test, num_iteration=self.model.best_iteration_)
+            #pred = self.proc_predict(X_test, oof_flag)
+
+            return self.model.predict(X_test, num_iteration=self.model.best_iteration_)
     
     def predict_proba(self, X_test):
         #print("X_test:", X_test)

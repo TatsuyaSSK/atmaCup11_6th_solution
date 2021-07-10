@@ -9,7 +9,9 @@ import argparse
 import inspect
 from eda import procEDA, showDetails
 
+
 from utils import *
+from image_utils import *
 
 from log_settings import MyLogger
 
@@ -96,6 +98,8 @@ class Preprocessor:
         self.index_col = index_col
         
         self.all_feature_func_dict = {t[0]:t[1] for t in inspect.getmembers(self, inspect.ismethod) if "fe__" in t[0] }
+        self.all_proc_func_dict = {t[0]:t[1] for t in inspect.getmembers(self, inspect.ismethod) if "proc__" in t[0] }
+        
         self.path_to_f_dir = PATH_TO_FEATURES_DIR
         
         if _df_test is not None:
@@ -164,37 +168,56 @@ class Preprocessor:
     
 
         
-        
-    def fe__fillna_Age(self, df):
-        
-        
-        df['fillna_Age'] = df['Age'].fillna(df['Age'].median())
-       
-        
-    def fe__fillna_Fare(self, df):
-        df["fillna_Fare"] = df['Fare'].fillna(np.mean(df['Fare']))
-        
-    def fe__IsAlone(self, df):
-        df['IsAlone'] = 0
-        df.loc[df['FamilySize'] == 1, 'IsAlone'] = 1
-        
-    def fe__FamilySize(self, df):
-        df["FamilySize"] = df['Parch'] + df['SibSp'] + 1
-        
-        
-    def fe__label_Embarked(self, df):
-        df['label_Embarked'] = df['Embarked'].fillna('S')
-        
-        df['label_Embarked'] = df['label_Embarked'].map({'S': 0, 'C': 1, 'Q': 2}).astype(int)
-        
+
+
+    # def fe__mean_max_floor(self, df):
+
+
+    #     floor_list = getColumnsFromParts(["gp_bssid_mean"], df.columns)
+
+    #     #pdb.set_trace()
+
+    #     df["mean_max_floor"] =  df[floor_list].idxmax(axis=1).map(lambda x: float(x.split("_")[-1]))
+    #     df["mean_max_floor"] = df["mean_max_floor"].fillna(-999).astype(int)
+
+    #     return df
+
+    # def fe__mean_max_floor_by_path(self, df):
+
+    #     path_gp =  df.groupby("path")["mean_max_floor"].apply(lambda x: x.mode())
+    #     path_gp.index = path_gp.index.map(lambda x: x[0])
+    #     path_gp.name = 'mean_max_floor_by_path'
 
         
-    def fe__label_Sex(self, df):
-        
-        df['label_Sex'] = df['Sex'].replace(['male', 'female'], [0, 1])
 
-  
-    
+    #     df = df.join(path_gp, on="path")
+        
+
+    #     return df
+
+    # def fe__count_max_floor(self, df):
+
+
+    #     floor_list = getColumnsFromParts(["gp_bssid_count"], df.columns)
+
+
+    #     df["count_max_floor"] =  df[floor_list].idxmax(axis=1).map(lambda x: float(x.split("_")[-1]))
+    #     df["count_max_floor"] = df["count_max_floor"].fillna(-999).astype(int)
+
+    #     return df
+
+    # def fe__count_max_floor_by_path(self, df):
+
+    #     path_gp =  df.groupby("path")["count_max_floor"].apply(lambda x: x.mode())
+    #     path_gp.index = path_gp.index.map(lambda x: x[0])
+    #     path_gp.name = 'count_max_floor_by_path'
+
+        
+
+    #     df = df.join(path_gp, on="path")
+        
+
+    #     return df
     
     def loadFs(self, df, f_name_list):
         
@@ -223,7 +246,7 @@ class Preprocessor:
         else:
             
             with timer2(f"create {f_name}"):
-                self.all_feature_func_dict[f"fe__{f_name}"](df)
+                df = self.all_feature_func_dict[f"fe__{f_name}"](df)
 
             df[f_name].to_pickle(path_to_f)
             
@@ -234,11 +257,51 @@ class Preprocessor:
             
             
         return df
+    
+    
+
+
+    # def proc__floor(self, df):
+        
+    #     for i in range(-2, 9):
+    #         df[f"has_floor_{i}"] = 0
+
+    #     gp = df.groupby("site_id")["floor"].unique()
+
+    #     for site_id in gp.index:
+
+    #         floors = [int(i) for i in gp.loc[site_id] if not np.isnan(i)]
+    #         for f in floors:
+                
+    #             df.loc[df["site_id"]==site_id, f"has_floor_{f}"] = 1
+
+
+
+
+    #     return df
+
+    def proc__image_statistics(self, df):
+        
+        ppath_to_dir = INPUT_DIR/"photos"
+        getImageStatistics(df, ppath_to_dir, ppath_to_label_dir=None)
+
+        return df
+
+
+
+    def proc__art_series_id_fillna(self, df):
+
+        df["art_series_id"] = df["art_series_id"].fillna("None")
+        
+
+        return df
         
         
     def proc(self, params):
         
         
+        for k, v in self.all_proc_func_dict.items():
+            self.df_all_ = v(self.df_all_)
     
         
         all_feature_names = [name.replace("fe__", "") for name in  self.all_feature_func_dict.keys()]
@@ -262,11 +325,11 @@ class Preprocessor:
         self.df_all_ =checkNan(self.df_all_, target_=self.target_, fill_val=-999)
         
         
-        exclude_label= ['Name',  'Ticket', 'Cabin', "Sex", "Embarked"]
+        exclude_label= ["materials_label", "techniques_label", "image_name"]
         self.df_all_, _ = proclabelEncodings(self.df_all_, not_proc_list=exclude_label+self.target_)
         
         
-        self.df_all_ =  removeColumns(self.df_all_, drop_cols=exclude_label, not_proc_list=self.target_)
+        #self.df_all_ =  removeColumns(self.df_all_, drop_cols=[], not_proc_list=self.target_)
 
 
     
@@ -282,24 +345,74 @@ def procMain(df_train, df_test, index_col, target_col, setting_params):
     return df_proc_train, df_proc_test
 
 
+def make_path(df_train, df_test):
+    
+    df_train["image_name"] = df_train.index.map(lambda x: f"{x}.jpg")
+    df_test["image_name"] = df_test.index.map(lambda x: f"{x}.jpg")
+    
+    return df_train, df_test
 
+def concat_other_table(df_train, df_test, index_col):
+
+    
+    
+
+    
+    df_techniques = pd.read_csv(INPUT_DIR / f'techniques.csv')
+    df_techniques = df_techniques.drop_duplicates().set_index(index_col)
+    
+    df_techniques_dummy = pd.get_dummies(df_techniques["name"], prefix="techniques")
+    df_techniques = df_techniques_dummy.reset_index().groupby(index_col).sum()
+    df_train = df_train.join(df_techniques, on=index_col)
+    
+    df_train["techniques_label"] = ""
+    for col in df_techniques_dummy.columns:
+        df_train[col].fillna(0, inplace=True)
+        df_train[col] = df_train[col].astype(int)
+        df_train["techniques_label"] = df_train["techniques_label"] + df_train[col].astype(str)
+    
+    ##########################
+    
+    df_materials = pd.read_csv(INPUT_DIR / f'materials.csv')
+    df_materials = df_materials.drop_duplicates().set_index(index_col)
+    
+    df_materials_dummy = pd.get_dummies(df_materials["name"], prefix="materials")
+    df_materials = df_materials_dummy.reset_index().groupby(index_col).sum()
+    df_train = df_train.join(df_materials, on=index_col)
+    
+    df_train["materials_label"] = ""
+    for col in df_materials_dummy.columns:
+        df_train[col].fillna(0, inplace=True)
+        df_train[col] = df_train[col].astype(int)
+        df_train["materials_label"] = df_train["materials_label"] + df_train[col].astype(str)
+    
+    
+    
+    df_train, df_test = make_path(df_train, df_test)
+    
+    
+    return df_train, df_test
+    
 
 def main(setting_params):
 
     
-    target_col = ['Survived']
-    index_col = "PassengerId"
+    target_col = ['target']
+    index_col = "object_id"
 
 
     full_load_flag=setting_params["full_load_flag"]
     save_pkl=1
     if ON_KAGGLE==True or full_load_flag==1:
         
-        df_train = pd.read_csv(INPUT_DIR / "train.csv")
-        df_train = df_train.set_index(index_col)
+
         
-        df_test = pd.read_csv(INPUT_DIR / "test.csv")
+        df_train = pd.read_csv(INPUT_DIR / f'train.csv')
+        df_test = pd.read_csv(INPUT_DIR / f'test.csv')
+        df_train = df_train.set_index(index_col)
         df_test = df_test.set_index(index_col)
+        
+        df_train, df_test = concat_other_table(df_train, df_test, index_col)
         
         
         if save_pkl and ON_KAGGLE==False:
@@ -315,15 +428,13 @@ def main(setting_params):
         
     logger.debug("df_train:{}".format(df_train.shape))
     logger.debug("df_test:{}".format(df_test.shape))
+    #pdb.set_trace()
 
-    
- 
-
-    df_proc_train, df_proc_test =  procMain(df_train, df_test, index_col, target_col, setting_params) 
+    df_proc_train, df_proc_test = procMain(df_train, df_test, index_col, target_col, setting_params) 
     #df_proc_train = reduce_mem_usage(df_proc_train)
 
-    df_proc_train.to_pickle(PROC_DIR / f'df_proc_train_{setting_params["mode"]}.pkl')
-    df_proc_test.to_pickle(PROC_DIR / f'df_proc_test_{setting_params["mode"]}.pkl')
+    df_proc_train.to_pickle(PROC_DIR / f'df_proc_train.pkl')
+    df_proc_test.to_pickle(PROC_DIR / f'df_proc_test.pkl')
 
     
     logger.debug(f"df_proc_train:{df_proc_train.columns}")
@@ -340,10 +451,14 @@ def argParams():
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--mode', default="lgb", choices=['lgb','exp','nn','graph', 'ave', 'stack'] )
     
+    
     parser.add_argument('-stack_dir', '--stacking_dir_name', type=int, )
     parser.add_argument('-full', '--full_load_flag', action="store_true")
     parser.add_argument('-d', '--debug', action="store_true")
     parser.add_argument('-f', '--force', nargs='*')
+
+    parser.add_argument('-site', '--site_id_str', type=str, )
+
     
 
 

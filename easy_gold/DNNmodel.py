@@ -1,11 +1,18 @@
 
 from utils import *
 
+from typing import Optional, Dict, List, Callable, Union, Collection
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from abc import ABCMeta, abstractmethod
+import pytorch_lightning as pl
+from torchvision import transforms as T
+from torchvision.models import resnet34
+from PIL import Image
+
 
 #from torch_geometric.nn import GCNConv, AGNNConv, ChebConv, NNConv, DeepGCNLayer
 #from torch_geometric.data import Data, Batch
@@ -23,6 +30,13 @@ def set_seed_torch(seed):
     torch.backends.cudnn.benchmark = False
 
 set_seed_torch(5)
+
+
+def mse_loss(input, target):
+    return torch.mean((input - target) ** 2)
+
+def weighted_mse_loss(input, target, weight):
+    return torch.mean(weight * (input - target) ** 2)
 
 
 class PositionEncode(nn.Module):
@@ -287,6 +301,52 @@ class MCRMSELoss(nn.Module):
 
         return total_score
         
+    
+class MyDatasetResNet(torch.utils.data.Dataset):
+
+    def __init__(self, df_train_X, df_train_y, dataset_params, train_flag):
+        
+        self.df_train_X = df_train_X
+        self.df_train_y = df_train_y
+        
+        IMG_MEAN = [0.485, 0.456, 0.406]
+        IMG_STD = [0.229, 0.224, 0.225]
+
+        
+        size = (224, 224)
+        additional_items = (
+            [T.Resize(size)]
+            if not train_flag
+            else [
+                T.RandomGrayscale(p=0.2),
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                T.ColorJitter(
+                    brightness=0.3,
+                    contrast=0.5,
+                    saturation=[0.8, 1.3],
+                    hue=[-0.05, 0.05],
+                ),
+                T.RandomResizedCrop(size),
+            ]
+        )
+
+        self.transformer = T.Compose(
+            [*additional_items, T.ToTensor(), T.Normalize(mean=IMG_MEAN, std=IMG_STD)]
+        )
+        
+    def __len__(self):
+        return self.df_train_X.shape[0]
+
+    def __getitem__(self, idx):
+        
+        image_name = self.df_train_X.iloc[idx]['image_name']
+        ppath_to_img = INPUT_DIR/f"photos/{image_name}"
+        img = Image.open(ppath_to_img)
+        img = self.transformer(img)
+   
+        return [img], self.df_train_y.iloc[idx]
+    
 class SequenceTransformer(object):
     def __init__(self):
         pass
@@ -303,140 +363,264 @@ class MyDatasetTransformer(torch.utils.data.Dataset):
 
     def __init__(self, df_train_X, df_train_y, dataset_params, train_flag):
 
-
+        self.last_query_flag = dataset_params["last_query_flag"]
         
         self.max_seq = dataset_params["max_seq"]
         self.pad_num = dataset_params["pad_num"]
         self.sequence_features_list = dataset_params["sequence_features_list"]
         self.continuous_features_list = dataset_params["continuous_features_list"]
+        self.bssid_features_list = dataset_params["bssid_features_list"]
+        self.fq_features_list = dataset_params["fq_features_list"]
         self.label_col = dataset_params["label_col"]
         self.row_index_name = df_train_X.index.name
 
+        print(df_train_X.columns)
+        print(df_train_y.columns)
+        print(self.sequence_features_list)
+        print(self.continuous_features_list)
         
-        if train_flag:
-            df_train_X[self.label_col]=df_train_y #[self.label_col]
-        else:
-            df_train_X[self.label_col]=0
-
+        #self.df_site = df_train_X[["site_id"]]
         
-        grp = df_train_X.reset_index().groupby("user_id", sort=False).tail(self.max_seq)
+        # for i in range(self.max_seq):
+        #     self.df_site[f"site_id_{i}"] = self.df_site["site_id"]
+        # self.df_site.drop(columns=["site_id"], inplace=True)
         
-        grp_user = grp.groupby("user_id", sort=False)
+        #self.df_bssid = df_train_X[self.sequence_features_list]
+        #self.df_rssi = df_train_X[self.continuous_features_list].astype("float32")
 
-        self.x_data=[]
-        self.x_data_conti=[]
-        self.y_data = []
-        self.row_id_data = []
-        self.padding_data = []
+        # print(self.df_rssi.iloc[0].values.dtype)
+        
+        # sys.exit()
+        
+        #self.df_y = df_train_y
 
-        agg_dict = {
-            self.row_index_name:list,
-            self.label_col:list, 
-        }
-        for col in self.sequence_features_list:
-            agg_dict[col] = list
-        for col in self.continuous_features_list:
-            agg_dict[col] = list
-
-        # for idx, row in grp_user.agg({
-        #     self.row_index_name:list,
-        #     "content_id":list, 
-        #     self.label_col:list, 
-        #     "task_container_id":list, 
-        #     "part":list, 
-        #     "prior_question_elapsed_time":list,
-        #     }).reset_index().iterrows():
-        for idx, row in grp_user.agg(agg_dict).reset_index().iterrows():
-
-
-            num_elements = len(row["content_id"])
-
-  
-            np_data_list = []
-            np_data_list_conti = []
-            if num_elements >= self.max_seq:
-
-                for col in self.sequence_features_list:
-
-                    seq_l = row[col]
-                    np_data_list.append(np.array(seq_l))
-
-                for col in self.continuous_features_list:
-
-                    conti_l = row[col]
-                    np_data_list_conti.append(np.array(conti_l))
-
-                row_id = row[self.row_index_name]
-                self.row_id_data.append(np.array(row_id))
-
-                pad_l = [False]*self.max_seq
-                self.padding_data.append(np.array(pad_l))
+        for col in self.label_col:
+            if train_flag:
                 
-                label_l=row[self.label_col]
-                self.y_data.append(np.array(label_l, dtype=float))
-
-                
-
+                df_train_X[col]=df_train_y[col]
             else:
-                # we have to pad...
-                num_padding = self.max_seq-num_elements
-                padding = [self.pad_num]*num_padding
+                df_train_X[col]=0
 
-                for col in self.sequence_features_list:
+        gp_key_id = "path"
+        time_id = "t1_wifi"
 
-                    seq_l = row[col]+padding
-                    np_data_list.append(np.array(seq_l))
+        prev_renew_cols = ["prev_x", "prev_y"]
 
+        num_label_col = len(self.label_col)
+        use_cols = self.sequence_features_list + self.continuous_features_list + self.label_col
+        self.prev_renew_idx = [use_cols.index(c) for c in prev_renew_cols]
+        print(use_cols)
 
-                for col in self.continuous_features_list:
-
-                    conti_l = row[col]+padding
-                    np_data_list_conti.append(np.array(conti_l))
-
-                row_id = row[self.row_index_name]+ [-1]*num_padding
-                self.row_id_data.append(np.array(row_id))
-
-                pad_l = [False]*num_elements + [True]*num_padding
-                self.padding_data.append(np.array(pad_l))
-
-                
-                label_l=row[self.label_col] #+ padding
-                self.y_data.append(np.array(label_l, dtype=float))
+        df_grp = df_train_X.reset_index().groupby(gp_key_id, sort=False)
 
 
-            #np_data = np.stack(np_data_list)
-            self.x_data.append(np_data_list)
-            self.x_data_conti.append(np_data_list_conti)
+        np_x_list = []
+        np_y_list = []
+        np_mask_list = []
+        group_id_list = []
+        raw_id_list = []
+        for i, (id, gp) in enumerate(df_grp):
+            gp = gp.sort_values(time_id)
+            
+            
+            raw_id = gp.index.values
 
-            # if 26262584 in row_id:
-            #     print(row_id)
-            #     import pdb; pdb.set_trace()
+            np_gp = gp[use_cols].values
+            #assert np_gp.shape[0] >=  self.max_seq
+            
+
+            np_gp = make_time_series(np_gp, windows_size=self.max_seq, pad_num=self.pad_num)
+            #np_gp = np_gp[self.max_seq-1:]
+        
+            np_x = np_gp[..., :-num_label_col]
+            np_y = np_gp[..., -num_label_col:]
+
+            #print(np_gp.shape)
+            #pdb.set_trace()
+
+            #pad mask
+            np_mask = np.all(np.equal(np_x, self.pad_num),axis=-1)
+            
+            np_x_list.append(np_x)
+            np_mask_list.append(np_mask)
+            group_id_list+= [i] * np_x.shape[0]
+
+            if self.last_query_flag:
+                np_y_list.append(np_y[:, -1, :]) #last
+            else:
+                #pdb.set_trace()
+                np_y_list.append(np_y) #last
+                raw_id = make_time_series(raw_id.reshape(-1, 1), windows_size=self.max_seq, pad_num=-1)
+                #pdb.set_trace()
+                # = raw_id[self.max_seq-1:]
+               
+
+            raw_id_list.append(raw_id)
 
 
-           
 
+            #pdb.set_trace()
 
-       
+        self.np_x = np.concatenate(np_x_list)
+        self.np_y = np.concatenate(np_y_list)
+        self.np_mask = np.concatenate(np_mask_list)
+        self.group_id_list = group_id_list
+        self.np_raw_id = np.concatenate(raw_id_list)
 
-        #import pdb; pdb.set_trace()
+        # print(self.np_x.shape)
+        # print(self.np_y.shape)
+        # print(self.np_mask.shape)
+        # print(f"len :{len(self.group_id_list)}")
+        # pdb.set_trace()
+        
+        
         
 
 
 
     def __len__(self):
-        return len(self.x_data)
+        return self.np_x.shape[0]
 
     def __getitem__(self, idx):
         
-        # x_list = []
+        #print(f"len :{len(self.group_id_list)}, {idx}")
+   
+        return [self.np_x[idx], self.np_mask[idx], self.group_id_list[idx], self.prev_renew_idx, self.np_raw_id[idx]], self.np_y[idx]
 
-        # for col in self.sequence_features_list:
-        #     x_list.append(self.x_data[idx][col])
 
-        # y= self.data[idx]["answered_correctly"]
+class MyDatasetLSTM2(torch.utils.data.Dataset):
 
-        return self.x_data[idx], self.x_data_conti[idx], self.row_id_data[idx], self.padding_data[idx], self.y_data[idx]
+    def __init__(self, df_train_X, df_train_y, dataset_params, train_flag):
 
+        self.last_query_flag = dataset_params["last_query_flag"]
+        
+        self.max_seq = dataset_params["max_seq"]
+        self.pad_num = dataset_params["pad_num"]
+        self.sequence_features_list = dataset_params["sequence_features_list"]
+        self.continuous_features_list = dataset_params["continuous_features_list"]
+        self.weight_list = dataset_params["weight_list"]
+        self.use_feature_cols = dataset_params["use_feature_cols"]
+        self.label_col = dataset_params["label_col"]
+        self.row_index_name = df_train_X.index.name
+
+        print(df_train_X.columns)
+        print(df_train_y.columns)
+        print(self.sequence_features_list)
+        print(self.continuous_features_list)
+        
+        #self.df_site = df_train_X[["site_id"]]
+        
+        # for i in range(self.max_seq):
+        #     self.df_site[f"site_id_{i}"] = self.df_site["site_id"]
+        # self.df_site.drop(columns=["site_id"], inplace=True)
+        
+        #self.df_bssid = df_train_X[self.sequence_features_list]
+        #self.df_rssi = df_train_X[self.continuous_features_list].astype("float32")
+
+        # print(self.df_rssi.iloc[0].values.dtype)
+        
+        # sys.exit()
+        
+        #self.df_y = df_train_y
+
+        for col in self.label_col:
+            if train_flag:
+                
+                df_train_X[col]=df_train_y[col]
+            else:
+                df_train_X[col]=0
+
+        gp_key_id = "path"
+        time_id = "timestamp"
+
+        
+
+        num_label_col = len(self.label_col)
+        num_weight_col = len(self.weight_list)
+        use_cols = self.use_feature_cols + self.weight_list+ self.label_col
+        print(use_cols)
+
+        df_grp = df_train_X.reset_index().groupby(gp_key_id, sort=False)
+
+
+        np_x_list = []
+        np_w_list = []
+        np_y_list = []
+        np_mask_list = []
+        group_id_list = []
+        raw_id_list = []
+        for i, (id, gp) in enumerate(df_grp):
+            gp = gp.sort_values(time_id)
+            
+            
+            raw_id = gp.index.values
+
+            np_gp = gp[use_cols].values
+            #assert np_gp.shape[0] >=  self.max_seq
+            
+
+            np_gp = make_time_series(np_gp, windows_size=self.max_seq, pad_num=self.pad_num)
+            #np_gp = np_gp[self.max_seq-1:]
+        
+            np_x = np_gp[..., :-(num_weight_col+num_label_col)]
+            np_w = np_gp[..., -(num_weight_col+num_label_col):-num_label_col]
+            np_y = np_gp[..., -num_label_col:]
+
+            #print(np_gp.shape)
+            
+
+            #pad mask
+            np_mask = np.all(np.equal(np_x, self.pad_num),axis=-1)
+            
+            np_x_list.append(np_x)
+            np_mask_list.append(np_mask)
+            
+            group_id_list+= [i] * np_x.shape[0]
+
+            if self.last_query_flag:
+                np_y_list.append(np_y[:, -1, :]) #last
+                np_w_list.append(np_w[:, -1, :]) #last
+            else:
+                #pdb.set_trace()
+                np_y_list.append(np_y) 
+                np_w_list.append(np_w)
+                raw_id = make_time_series(raw_id.reshape(-1, 1), windows_size=self.max_seq, pad_num=-1)
+                #pdb.set_trace()
+                # = raw_id[self.max_seq-1:]
+               
+
+            raw_id_list.append(raw_id)
+
+
+
+            #pdb.set_trace()
+
+        self.np_x = np.concatenate(np_x_list)
+        self.np_w = np.concatenate(np_w_list)
+        self.np_y = np.concatenate(np_y_list)
+        self.np_mask = np.concatenate(np_mask_list)
+        self.group_id_list = group_id_list
+        self.np_raw_id = np.concatenate(raw_id_list)
+
+        # print(self.np_x.shape)
+        # print(self.np_y.shape)
+        # print(self.np_mask.shape)
+        # print(f"len :{len(self.group_id_list)}")
+        # pdb.set_trace()
+        
+        
+        
+
+
+
+    def __len__(self):
+        return self.np_x.shape[0]
+
+    def __getitem__(self, idx):
+        
+        #print(f"len :{len(self.group_id_list)}, {idx}")
+   
+        return [self.np_x[idx], self.np_mask[idx], self.group_id_list[idx], self.np_w[idx],self.np_raw_id[idx]], self.np_y[idx]
 
 
 
@@ -476,9 +660,1677 @@ def collate_fn_Transformer(batch):
 
 
     return new_x_list, new_batch_y
+
+
+class LastQueryTransformerEncoderLayer(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+        self.activation = nn.ReLU()
+
+    def forward(self,
+                src: torch.Tensor,
+                src_mask: Optional[torch.Tensor] = None,
+                src_key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        src2 = self.self_attn(query=src[-1,:,:].unsqueeze(0),  # last query
+                              key=src,
+                              value=src,
+                              attn_mask=src_mask,
+                              key_padding_mask=src_key_padding_mask)[0]
+        # broadcast and add
+        src = src + self.dropout1(src2)
+
+        # remaining part is same as the normal transformer
+        src = self.norm1(src)
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = src + self.dropout2(src2)
+        src = self.norm2(src)
+
+        return src
+
+class PytorchLightningModelBase(pl.LightningModule):
+    def __init__(self):
+        super().__init__()
+
+        self.score_dict = {}
+        self.best_score_dict = {}
+        self.best_epoch = 1
+
+
+    # @abstractmethod
+    # def forward():
+
+    #     pass
+
+    def checkBest(self):
+
+        score = self.score_dict["valid"][self.monitor]
+        if ((self.mode=="max") and (self.last_score < score)) or ((self.mode=="min") and (self.last_score > score)):
+            self.last_score = score
+            self.best_score_dict = self.score_dict
+            self.best_epoch = self.current_epoch
+            print(f"renew best!! : {self.current_epoch}")
+
+
+    def getScoreInfo(self):
+
+
+        return self.best_score_dict, self.best_epoch, self.score_dict
+
+
+    
+
+    def criterion(self, y_true, y_pred, weight=None):
+
+        #print(f"y_true : {y_true.shape}")
+        #print(f"y_pred : {y_pred.shape}")
+        #print(f"weight : {weight.shape}")
+        #pdb.set_trace()
+
+        if weight is None:
+            return nn.MSELoss()(y_pred[:, :2].float(), y_true[:, :2].float())
+        else:
+            return weighted_mse_loss(input=y_pred[:, :2].float(), target=y_true[:, :2].float(), weight=weight)
+
+
+        
+
+    def setParams(self, _params):
+
+        self.learning_rate = _params["learning_rate"]
+        self.eval_metric_func_dict = _params["eval_metric_func_dict__"]
+        self.monitor=_params["eval_metric"]
+        self.mode=_params['eval_max_or_min']
+
+        self.last_score = -10000000000 if self.mode == "max" else 10000000000
+
+        print("show eval metrics : ")
+        print(self.eval_metric_func_dict)
+
+    def training_step(self, batch, batch_idx):
+        
+        out = self._forward(batch)
+
+        #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[-1][..., -1].view(-1, 1))
+        train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
         
 
 
+        
+        self.log('loss', loss, logger=False)
+        ret = {'loss': loss}
+
+        for k, v in train_batch_eval_score_dict.items():
+            self.log(f"train_{k}", v, logger=False)
+            ret[f"{k}"] = v
+
+        return ret
+
+
+
+    def validation_step(self, batch, batch_idx):
+
+        out = self._forward(batch)
+
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[-1][..., -1].view(-1, 1))
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+        
+
+
+        self.log('val_loss', loss, logger=False)
+        ret = {'val_loss': loss}
+
+        for k, v in val_batch_eval_score_dict.items():
+            self.log(f"val_{k}", v, logger=False)
+            ret[f"{k}"] = v
+        
+
+        #self.log('val_loss', loss)
+
+
+        return ret
+
+    def training_epoch_end(self, outputs):
+        
+        
+        score_dict = calcBatchMeanEvalScoreDictFromEvalScoreDictList(outputs, not_proc_cols=["loss"])
+        score_dict["loss"] = torch.stack([o['loss'] for o in outputs]).mean().item()
+
+        print_text = f"Epoch {self.current_epoch}, "
+        for name, score in score_dict.items():
+            self.log(f"train_{name}", score)
+            print_text += f"{name} {score}, "
+        print(print_text)
+
+        self.score_dict = {}
+        self.score_dict["train"] = score_dict
+
+        #
+
+        # if self._on_training_epoch_end is not None:
+        #     for f in self._on_training_epoch_end:
+        #         f(self.current_epoch, loss)
+
+    def validation_epoch_end(self, outputs):
+
+        score_dict = calcBatchMeanEvalScoreDictFromEvalScoreDictList(outputs, not_proc_cols=["val_loss"])
+        score_dict["val_loss"] = torch.stack([o['val_loss'] for o in outputs]).mean().item()
+
+        print_text = f"Epoch {self.current_epoch}, "
+        for name, score in score_dict.items():
+            self.log(f"val_{name}", score)
+            print_text += f"{name} {score}, "
+        print(print_text)
+
+        self.score_dict["valid"] = score_dict
+        self.checkBest()
+        #loss = torch.stack([o['val_loss'] for o in outputs]).mean()
+
+        # if self._on_validation_epoch_end is not None:
+        #     for f in self._on_validation_epoch_end:
+        #         f(self.current_epoch, loss)
+
+    
+
+    def test_step(self, batch, batch_idx):
+        out = self._forward(batch)
+        #pdb.set_trace()
+        return {'out': out}
+
+    def test_epoch_end(self, outputs):
+        #pdb.set_trace()  
+        self.final_preds = torch.cat([o['out'] for o in outputs]).data.cpu().detach().numpy()
+
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        return optimizer
+    
+    
+class myResNet(PytorchLightningModelBase):
+    def __init__(self) -> None:
+        super().__init__()
+        
+        self.model = resnet34(pretrained=False)
+        self.model.fc = nn.Linear(in_features=512, out_features=1, bias=True)
+        
+    def _forward(self, batch):
+        
+        img =  batch[0]
+        out = self.model(img)
+        
+        
+        return out
+
+    def forward(self, batch):
+        out = self._forward(batch)
+        return out
+
+    def criterion(self, y_true, y_pred, weight=None):
+
+        #print(f"y_true : {y_true.shape}")
+        #print(f"y_pred : {y_pred.shape}")
+        #print(f"weight : {weight.shape}")
+        #pdb.set_trace()
+
+        if weight is None:
+            return nn.MSELoss()(y_pred.float(), y_true.float())
+        else:
+            return weighted_mse_loss(input=y_pred[:, :2].float(), target=y_true[:, :2].float(), weight=weight)
+
+
+class LastLSTM(PytorchLightningModelBase):
+    def __init__(self,
+                 n_numerical_features: int,
+                 emb_dim_pairs_list,
+                 prev_renew_col_idx_dict,
+                 ##num_bssid_features:int,
+                 ##num_fq_features:int,
+                 last_query_flag:bool,
+                 d_model: int = 512,#256,
+
+                 #dropout: float = 0.1,
+                 dropout_emb: float = 0.1,
+
+                 lstm_hidden_dim:int = 128*2,
+                 num_lstm_layers:int = 2,
+                 dropout_lstm:float = 0.1,
+                 
+                ) -> None:
+        super().__init__()
+
+        self.last_query_flag = last_query_flag
+        self.prev_renew_col_idx_dict = prev_renew_col_idx_dict
+
+        self.prev_idx_for_renew_batch = -1
+
+        self.n_numerical_features = n_numerical_features
+        ##self.num_bssid_features=num_bssid_features
+        ##self.num_fq_features=num_fq_features
+        
+        self.d_model = d_model
+
+
+        self.emb_layers = nn.ModuleList([nn.Embedding(m, d) for m, d in emb_dim_pairs_list])
+        self.total_cat_emb_dim = sum([d for m, d in emb_dim_pairs_list])
+        self.categorical_proj = nn.Sequential(
+            nn.Linear(self.total_cat_emb_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+        )
+
+ 
+        #self.bssid_emb_layer = nn.Embedding(54454+1, self.d_model)
+        ##self.bssid_emb_layer = nn.Embedding(54468+1, self.d_model)
+        
+        
+
+        # self.total_bssid_emb_dim = self.num_bssid_features * self.d_model
+        # self.bssid_proj = nn.Sequential(
+        #     nn.Linear(self.total_bssid_emb_dim, self.d_model),
+        #     nn.LayerNorm(self.d_model),
+        # )
+
+        # self.fq_emb_layer = nn.Embedding(27+1, self.d_model)
+        # self.total_fq_emb_dim = self.num_fq_features * self.d_model
+        # self.fq_proj = nn.Sequential(
+        #     nn.Linear(self.total_fq_emb_dim, self.d_model),
+        #     nn.LayerNorm(self.d_model),
+        # )
+        
+
+        self.conti_embed_layers = nn.ModuleList([nn.Linear(1,self.d_model,bias=False) for n in range(n_numerical_features)])
+        self.continuous_proj = nn.Sequential(
+            nn.Linear(self.d_model*n_numerical_features, self.d_model),
+            nn.LayerNorm(self.d_model),
+        )
+
+        self.emb_src_dim = self.d_model * 2##* 4
+
+        self.dropout_emb = nn.Dropout(dropout_emb)
+        self.layer_normal = nn.LayerNorm(self.emb_src_dim)
+
+        # self.total_proj = nn.Sequential(
+        #     nn.Dropout(0.2),
+        #     nn.Linear(self.emb_src_dim, self.emb_src_dim),
+        # )
+
+
+        self.lstm = nn.LSTM(
+            input_size=self.emb_src_dim,
+            bidirectional=True,
+            hidden_size=lstm_hidden_dim,
+            num_layers=num_lstm_layers,
+            dropout=dropout_lstm)
+
+        last_dim = 32
+        self.decoder_xy = nn.Sequential(
+            nn.Linear(lstm_hidden_dim*2, last_dim), #for bidirectional
+            #nn.Linear(lstm_hidden_dim, last_dim),
+            #nn.ReLU(True),
+            nn.Linear(last_dim, 2),
+        )
+    
+        
+
+    def init_weights(self):
+        initrange = 0.1
+
+        for i, l in enumerate(self.emb_layers):
+            l.weight.data.uniform_(-initrange, initrange)
+
+        for i, l in enumerate(self.conti_embed_layers):
+            l.weight.data.uniform_(-initrange, initrange)
+
+        ##self.bssid_emb_layer.weight.data.uniform_(-initrange, initrange)
+        ##self.fq_emb_layer.weight.data.uniform_(-initrange, initrange)
+
+    
+
+        # def weights_init(m):
+        #     classname = m.__class__.__name__
+        #     if classname.find('Conv') != -1:
+        #         torch.nn.init.normal_(m.weight, 0.0, 0.02)
+        #     elif classname.find('BatchNorm') != -1:
+        #         torch.nn.init.normal_(m.weight, 1.0, 0.02)
+        #         torch.nn.init.zeros_(m.bias)
+
+
+    def _forward(self, batch):
+
+        '''
+        S is the sequence length, N the batch size and E the Embedding Dimension (number of features).
+        src: (S, N, E)
+        '''
+        #
+        src = batch[0][0]
+
+
+        add_flag=False
+
+        if add_flag:
+            emb_sum = None
+            for i, emb_layer in enumerate(self.emb_layers):
+                emb = emb_layer(src[...,i])
+                if i == 0:
+                    emb_sum = emb
+                else:
+                    emb_sum += emb
+
+            num_s = len(self.emb_layers) 
+            for i, emb_layer in enumerate(self.conti_embed_layers):
+                #import pdb; pdb.set_trace()
+                emb_sum += emb_layer(src[...,i+num_s].unsqueeze(-1))
+            
+            embedded_src = emb_sum.transpose(0, 1) # (S, N, E)
+        else:
+
+            
+
+            emb_list = [emb_layer(src[...,i].long()) for i, emb_layer in enumerate(self.emb_layers)]
+            emb_concat = torch.cat(emb_list, axis=-1)
+            #print(f"emb_concat : {emb_concat.shape}")
+            emb_concat = self.categorical_proj(emb_concat)
+            #print(f"emb_concat proj: {emb_concat.shape}")
+
+            num_s = len(self.emb_layers)
+            #print(f"num_s: {num_s}")
+           
+            # bssid_emb = [self.bssid_emb_layer(src[..., i+num_s].long()) for i in range(self.num_bssid_features)]
+            # bssid_emb_concat = torch.cat(bssid_emb, axis=-1)
+            # bssid_emb_concat = self.bssid_proj(bssid_emb_concat) 
+
+            # num_s += self.num_bssid_features
+            # #print(f"num_s: {num_s}")
+            
+            # fq_emb = [self.fq_emb_layer(src[..., i+num_s].long()) for i in range(self.num_fq_features)]
+            # fq_emb_concat = torch.cat(fq_emb, axis=-1)
+            # fq_emb_concat = self.fq_proj(fq_emb_concat) 
+
+            
+
+            ##num_s += self.num_fq_features            
+            conti_emb_list = [emb_layer(src[...,i+num_s].unsqueeze(-1).float()) for i, emb_layer in enumerate(self.conti_embed_layers)]
+            #print(f"conti_emb_list : {conti_emb_list}")
+            #print(f"conti_emb_list : {conti_emb_list[0].shape}")
+            conti_emb_concat = torch.cat(conti_emb_list, axis=-1)
+            #print(f"conti_emb_concat : {conti_emb_concat.shape}")
+
+            conti_emb_concat = self.continuous_proj(conti_emb_concat)
+            #print(f"conti_emb_concat proj : {conti_emb_concat.shape}")
+
+
+            ##embedded_src = torch.cat([emb_concat, bssid_emb_concat, fq_emb_concat, conti_emb_concat], axis=-1)
+            embedded_src = torch.cat([emb_concat,  conti_emb_concat], axis=-1)
+            #embedded_src = emb_concat
+
+            #print(f"embedded_src : {embedded_src.shape}")
+            
+
+            embedded_src=embedded_src.transpose(0, 1)
+
+            #import pdb; pdb.set_trace()
+
+
+
+        #input_emb = embedded_src * np.sqrt(self.ninp)
+
+        input_emb = self.dropout_emb(embedded_src)
+        input_emb = self.layer_normal(input_emb)
+
+
+
+        #input_emb = self.total_proj(embedded_src)
+        #input_emb = embedded_src
+
+        #
+
+        input_emb,_ = self.lstm(input_emb)
+
+        #embedded_src += self.postition(embedded_src)
+
+        #
+        if self.last_query_flag:
+            output_last = input_emb[-1, ...]
+        else:
+            output_last = input_emb
+            output_last=output_last.transpose(0, 1)
+        #pdb.set_trace()
+
+      
+        output_xy = self.decoder_xy(output_last)
+
+        # if self.last_query_flag:
+        #     output_all = torch.cat([output_xy, batch[0][4].view(-1, 1)], axis=-1)
+        # else:
+        #     output_all = torch.cat([output_xy, batch[0][4]], axis=-1)
+       
+
+        #pdb.set_trace()
+        #output_all = torch.cat([batch[0][4].view(-1, 1), batch[0][4].view(-1, 1), batch[0][4].view(-1, 1)], axis=-1)
+
+        
+        
+        return output_xy
+
+    def forward(self, batch):
+        out = self._forward(batch)
+        return out
+
+    def criterion(self, y_true, y_pred, weight=None):
+
+        #print(f"y_true : {y_true.shape}")
+        #print(f"y_pred : {y_pred.shape}")
+        #print(f"weight : {weight.shape}")
+        #pdb.set_trace()
+
+        if weight is None:
+            return nn.MSELoss()(y_pred[:, :2].float(), y_true[:, :2].float())
+        else:
+            return weighted_mse_loss(input=y_pred[:, :2].float(), target=y_true[:, :2].float(), weight=weight)
+
+    def training_step(self, batch, batch_idx):
+        
+        out = self._forward(batch)
+
+        
+        if self.last_query_flag==False:
+            out = out[~batch[0][1]]
+            y_true = batch[-1][~batch[0][1]]
+            weight = batch[0][3][~batch[0][1]]
+            #weight = y_true[..., -1].view(-1, 1)
+            
+        else:
+            y_true = batch[-1]
+            weight = batch[0][3]
+
+        loss = self.criterion(y_pred=out, y_true=y_true, weight=weight)
+        #pdb.set_trace()
+        train_batch_eval_score_dict=calcEvalScoreDict(y_true=y_true.data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+        #pdb.set_trace()
+        
+
+
+        
+        self.log('loss', loss, logger=False)
+        ret = {'loss': loss}
+
+        for k, v in train_batch_eval_score_dict.items():
+            self.log(f"train_{k}", v, logger=False)
+            ret[f"{k}"] = v
+
+        return ret
+
+
+
+    def validation_step(self, batch, batch_idx):
+
+        out = self._forward(batch)
+        if self.last_query_flag==False:
+            out = out[~batch[0][1]]
+            y_true = batch[-1][~batch[0][1]]
+            weight = batch[0][3][~batch[0][1]]
+            #weight = y_true[..., -1].view(-1, 1)
+        else:
+            y_true = batch[-1]
+            weight = batch[0][3]
+            #weight = batch[-1][..., -1].view(-1, 1)
+
+        loss = self.criterion(y_pred=out, y_true=y_true, weight=weight)
+        #pdb.set_trace()
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=y_true.data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+
+
+
+        self.log('val_loss', loss, logger=False)
+        ret = {'val_loss': loss}
+
+        for k, v in val_batch_eval_score_dict.items():
+            self.log(f"val_{k}", v, logger=False)
+            ret[f"{k}"] = v
+        
+
+        #self.log('val_loss', loss)
+
+
+        return ret
+        
+    def register_batch(self, batch, prev_out, prev_mask):
+
+        
+        
+
+        di = self.prev_renew_col_idx_dict
+        
+
+        if self.last_query_flag:
+            batch[0][0][:, -1, di["prev_x"]] = prev_out[:, 0].item()
+            batch[0][0][:, -1, di["prev_y"]] = prev_out[:, 1].item()
+
+            batch[0][0][:, -1, di["next_x"]] = batch[0][0][:, -1, di["prev_x"]] + batch[0][0][:, -1, di["cum_rel_x"]]
+            batch[0][0][:, -1, di["next_y"]] = batch[0][0][:, -1, di["prev_y"]] + batch[0][0][:, -1, di["cum_rel_y"]]
+        
+        else:
+            masked_cur_batch = batch[0][0][:,(~prev_mask).view(-1),:]
+            masked_prev_out = prev_out[:,(~prev_mask).view(-1),:]
+
+            batch[0][0][:,(~prev_mask).view(-1),di["prev_x"]]  = masked_prev_out[:,:,0].double()
+            batch[0][0][:,(~prev_mask).view(-1),di["prev_y"]]  = masked_prev_out[:,:,1].double()
+            
+            batch[0][0][:,(~prev_mask).view(-1),di["next_x"]] = batch[0][0][:,(~prev_mask).view(-1),di["prev_x"]] + batch[0][0][:,(~prev_mask).view(-1),di["cum_rel_x"]]
+            batch[0][0][:,(~prev_mask).view(-1),di["next_y"]] = batch[0][0][:,(~prev_mask).view(-1),di["prev_y"]] + batch[0][0][:,(~prev_mask).view(-1),di["cum_rel_y"]]
+
+        #pdb.set_trace()
+
+        # for i, idx in enumerate(renew_cols_idx_list):
+        #     if self.last_query_flag:
+        #         #print(batch[0][0][:, -1, idx])
+        #         #print(prev_out[:, i])
+        #         batch[0][0][:, -1, idx] = prev_out[:, i].item()
+        #         #print(batch[0][0][:, -1, idx])
+        #         #pdb.set_trace()
+        #     else:
+                
+        #         # print(batch[0][0][:,:,idx])
+        #         # print(prev_out[:,:,i])
+        #         # print((~prev_mask))
+
+        #         masked_cur_batch = batch[0][0][:,(~prev_mask).view(-1),:]
+        #         masked_prev_out = prev_out[:,(~prev_mask).view(-1),:]
+                
+        #         masked_cur_batch[:,-1,idx] = masked_prev_out[:,-1,i].double()
+        #         masked_cur_batch[:,:-1,idx] +=masked_prev_out[:, :-1, i][:,:, None].double()
+        #         masked_cur_batch[:,:-1,idx] = masked_cur_batch[:,:-1,idx]/2
+        #         #pdb.set_trace()
+        #         batch[0][0][:,(~prev_mask).view(-1),idx] = masked_cur_batch[:,:,idx].view(-1)
+                
+        #         #print(batch[0][0][:,:,idx])
+        #         #pdb.set_trace()
+
+                
+
+
+        
+        return batch
+
+    def renew_batch(self, batch):
+
+        current_id = batch[0][2].item()
+
+
+        if self.prev_idx_for_renew_batch == current_id:
+            #self.seq_num_in_batch += 1
+            
+            batch[0][0][:, :-1,:] = self.prev_batch[0][0][:,1:,:]
+            batch = self.register_batch(batch, self.prev_out, prev_mask=self.prev_batch[0][1])
+            #pdb.set_trace()
+
+        self.prev_idx_for_renew_batch = current_id
+        #self.seq_num_in_batch = 0
+
+        return batch
+            
+
+
+    def test_step(self, batch, batch_idx):
+
+        #print(batch)
+        if self.oof_prediction==False:
+            batch = self.renew_batch(batch)
+
+        out = self._forward(batch)
+        
+        if self.oof_prediction==False:
+            self.prev_batch = batch #self.register_batch(batch, out)
+            self.prev_out = out #self.register_batch(batch, out)
+
+        
+        sort_idx = batch[0][4]
+        if self.last_query_flag==False:
+            out =  out[~batch[0][1]]
+            sort_idx = sort_idx[~batch[0][1]]
+        
+        return {'out': out, "sort_idx":sort_idx}
+        
+    def test_epoch_end(self, outputs):
+        #
+        sort_idx = torch.cat([o['sort_idx'] for o in outputs])
+        pred = torch.cat([o['out'] for o in outputs])
+        if self.last_query_flag==False:
+            sort_idx = sort_idx.data.cpu().detach().numpy()
+            pred = pred.data.cpu().detach().numpy()
+            df = pd.DataFrame(pred)
+            df["idx"] = sort_idx
+            gp = df.groupby("idx").mean()
+            self.final_preds = gp.values
+
+        else:
+            self.final_preds = pred[sort_idx].data.cpu().detach().numpy()
+       
+
+
+
+class SimpleTransformer(PytorchLightningModelBase):
+    def __init__(self,
+                 n_numerical_features: int,
+                 emb_dim_pairs_list,
+                 num_bssid_features:int,
+                 num_fq_features:int,
+                 last_query_flag:bool,
+                
+
+                 num_dec_features:int = 2,
+                 d_model: int = 32*4,
+                 nhead: int = 1,
+                 num_encoder_layers: int = 1,
+                 num_decoder_layers:int = 1,
+                 dim_feedforward: int = 64,
+                 dropout: float = 0.1,
+                 dropout_emb: float = 0.0,
+                 activation: str = "relu",
+
+                 lstm_hidden_dim:int = 128,
+                 num_lstm_layers:int = 1,
+                 dropout_lstm:float = 0.1,
+                 
+                 norm_encoder_output: bool = False,
+                 
+                 on_training_epoch_end: Optional[List[Callable]] = None,
+                 on_validation_epoch_end: Optional[List[Callable]] = None,
+                 subtract: bool = False) -> None:
+        super().__init__()
+
+        self.last_query_flag = last_query_flag
+
+        self.prev_idx_for_renew_batch = -1
+
+
+        self.n_numerical_features = n_numerical_features
+        self.num_bssid_features=num_bssid_features
+        self.num_fq_features=num_fq_features
+        self.num_dec_features = num_dec_features
+
+        
+        self.d_model = d_model
+
+
+        self.emb_layers = nn.ModuleList([nn.Embedding(m, d) for m, d in emb_dim_pairs_list])
+        self.total_cat_emb_dim = sum([d for m, d in emb_dim_pairs_list])
+        self.categorical_proj = nn.Sequential(
+            #nn.Linear(self.total_cat_emb_dim, self.d_model),
+            #nn.LayerNorm(self.d_model),
+            nn.Conv1d(in_channels=self.total_cat_emb_dim, out_channels=self.d_model, kernel_size=1),
+
+        )
+
+        self.bssid_emb_layer = nn.Embedding(54468+1, self.d_model)
+        
+        self.total_bssid_emb_dim = self.num_bssid_features * self.d_model
+        self.bssid_proj = nn.Sequential(
+            nn.Conv1d(in_channels=self.total_bssid_emb_dim, out_channels=self.d_model, kernel_size=1),
+            #nn.Linear(self.total_bssid_emb_dim, self.d_model),
+            #nn.LayerNorm(self.d_model),
+        )
+
+        self.fq_emb_layer = nn.Embedding(27+1, self.d_model)
+        self.total_fq_emb_dim = self.num_fq_features * self.d_model
+        self.fq_proj = nn.Sequential(
+            nn.Conv1d(in_channels=self.total_fq_emb_dim, out_channels=self.d_model, kernel_size=1),
+            #nn.Linear(self.total_fq_emb_dim, self.d_model),
+            #nn.LayerNorm(self.d_model),
+        )
+
+        self.conti_embed_layers = nn.ModuleList([nn.Linear(1,self.d_model,bias=False) for n in range(self.n_numerical_features)])
+        self.continuous_proj = nn.Sequential(
+            nn.Conv1d(in_channels=self.d_model*(self.n_numerical_features), out_channels=self.d_model, kernel_size=1),
+            #nn.Linear(self.d_model*(self.n_numerical_features-self.num_dec_features), self.d_model),
+            #nn.Linear(self.d_model*(self.n_numerical_features), self.d_model),
+            #nn.LayerNorm(self.d_model),
+        )
+
+        self.final_d_model = self.d_model * 4
+
+        self.dec_embed_layers = nn.ModuleList([nn.Linear(1,self.d_model,bias=False) for n in range(self.num_dec_features)])
+        self.dec_proj = nn.Sequential(
+            nn.Conv1d(in_channels=self.d_model*(self.num_dec_features), out_channels=self.final_d_model, kernel_size=1),
+            #nn.Linear(self.d_model*(self.num_dec_features), self.final_d_model),
+            #nn.LayerNorm(self.final_d_model),
+        )
+
+
+        self.postition = PositionEncode(self.final_d_model)
+
+        self.dropout_emb = nn.Dropout(dropout_emb)
+        self.layer_normal = nn.LayerNorm(self.final_d_model)
+        self.layer_normal_tgt = nn.LayerNorm(self.final_d_model)
+
+        #self.conv = nn.Conv1d(in_channels=self.d_emb, out_channels=self.d_model, kernel_size=1)
+
+        # self.lstm = nn.LSTM(
+        #     input_size=self.emb_src_dim,
+        #     bidirectional=False,
+        #     hidden_size=lstm_hidden_dim,
+        #     num_layers=num_lstm_layers,
+        #     dropout=dropout_lstm)
+
+        # self.emb_src_dim = lstm_hidden_dim
+        encoder_layer = LastQueryTransformerEncoderLayer(self.final_d_model, nhead, dim_feedforward, dropout)
+        # norm = nn.LayerNorm(self.emb_src_dim) if norm_encoder_output else None
+        # self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers, norm)
+
+
+        #encoder_layer = nn.TransformerEncoderLayer(self.final_d_model, nhead, dim_feedforward, dropout, activation)
+        encoder_norm = nn.LayerNorm(self.final_d_model)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+
+
+        decoder_layer = nn.TransformerDecoderLayer(self.final_d_model, nhead, dim_feedforward, dropout, activation)
+        decoder_norm = nn.LayerNorm(self.final_d_model)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm)
+        #self.out = nn.Linear(512, target_vocab_length)
+
+
+        self.decoder_xy = nn.Sequential(
+            nn.Linear(self.final_d_model, self.d_model),
+            #nn.ReLU(True),
+            nn.Linear(self.d_model, 2),
+        )
+
+
+        #self.decoder_floor = nn.Linear(self.emb_src_dim, 1)
+
+        self.init_weights()
+
+    def init_weights(self):
+        initrange = 0.1
+
+        for i, l in enumerate(self.emb_layers):
+            l.weight.data.uniform_(-initrange, initrange)
+
+        for i, l in enumerate(self.conti_embed_layers):
+            l.weight.data.uniform_(-initrange, initrange)
+
+        for i, l in enumerate(self.dec_embed_layers):
+            l.weight.data.uniform_(-initrange, initrange)
+
+        self.bssid_emb_layer.weight.data.uniform_(-initrange, initrange)
+        self.fq_emb_layer.weight.data.uniform_(-initrange, initrange)
+
+        # self.decoder.bias.data.zero_()
+        # self.decoder.weight.data.uniform_(-initrange, initrange)
+
+    def generate_square_subsequent_mask(self, sz):
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        #mask = mask.float().masked_fill(mask == 0, float('-1e8')).masked_fill(mask == 1, float(0.0))
+        return mask
+
+    def _forward(self, batch):
+
+        '''
+        S is the sequence length, N the batch size and E the Embedding Dimension (number of features).
+        src: (S, N, E)
+        src_mask: (S, S)
+        src_key_padding_mask: (N, S)
+        src_key_padding_mask is (N, S) with boolean True/False. #padにmaskするやつ
+        src_mask is (S, S) with float(’-inf’) and float(0.0). #未来の情報にmaskするやつ
+
+
+        src: (S, N, E)
+
+        tgt: (T, N, E)
+
+        src_mask: (S, S)
+
+        tgt_mask: (T, T)
+
+        memory_mask: (T, S)
+
+        src_key_padding_mask: (N, S)
+
+        tgt_key_padding_mask: (N, T)
+
+        memory_key_padding_mask: (N, S)
+        '''
+        #
+        src = batch[0][0]
+        # print( self.emb_layers[0].weight.data)
+        # print( self.decoder_xy[0].weight)
+        # print( self.decoder_xy[1].weight)
+        # pdb.set_trace()
+
+        add_flag=False
+
+        if add_flag:
+            emb_sum = None
+            for i, emb_layer in enumerate(self.emb_layers):
+                emb = emb_layer(src[...,i])
+                if i == 0:
+                    emb_sum = emb
+                else:
+                    emb_sum += emb
+
+            num_s = len(self.emb_layers) 
+            for i, emb_layer in enumerate(self.conti_embed_layers):
+                #import pdb; pdb.set_trace()
+                emb_sum += emb_layer(src[...,i+num_s].unsqueeze(-1))
+            
+            embedded_src = emb_sum.transpose(0, 1) # (S, N, E)
+        else:
+
+           
+
+            emb_list = [emb_layer(src[...,i].long()) for i, emb_layer in enumerate(self.emb_layers)]
+            emb_concat = torch.cat(emb_list, axis=-1)
+            emb_concat = emb_concat.permute([0, 2, 1])
+            
+            #print(f"emb_concat : {emb_concat.shape}")
+            emb_concat = self.categorical_proj(emb_concat)
+            #print(f"emb_concat proj: {emb_concat.shape}")
+
+            num_s = len(self.emb_layers)
+            bssid_emb = [self.bssid_emb_layer(src[..., i+num_s].long()) for i in range(self.num_bssid_features)]
+            bssid_emb_concat = torch.cat(bssid_emb, axis=-1)
+            bssid_emb_concat = bssid_emb_concat.permute([0, 2, 1])
+
+            bssid_emb_concat = self.bssid_proj(bssid_emb_concat) 
+
+            num_s += self.num_bssid_features
+            #print(f"num_s: {num_s}")
+            
+            fq_emb = [self.fq_emb_layer(src[..., i+num_s].long()) for i in range(self.num_fq_features)]
+            fq_emb_concat = torch.cat(fq_emb, axis=-1)
+            fq_emb_concat = fq_emb_concat.permute([0, 2, 1])
+
+            fq_emb_concat = self.fq_proj(fq_emb_concat) 
+
+            num_s += self.num_fq_features
+            decode_cols_idx_list = [i[0].item() for i in batch[0][3]]
+
+            # conti_emb_list=[]
+            # for i, emb_layer in enumerate(self.conti_embed_layers):
+            #     idx = i+num_s
+            #     print(f"i:{i}, idx:{idx}, num_s:{num_s}")
+
+            #     if idx in decode_cols_idx_list:
+            #         print("skip")
+            #     else:
+            #         conti_emb_list.append(emb_layer(src[...,idx].unsqueeze(-1).float()))
+                    
+
+
+     
+            conti_emb_list = [emb_layer(src[...,i+num_s].unsqueeze(-1).float()) for i, emb_layer in enumerate(self.conti_embed_layers) if  (i+num_s) not in decode_cols_idx_list ]
+            #conti_emb_list = [emb_layer(src[...,i+num_s].unsqueeze(-1).float()) for i, emb_layer in enumerate(self.conti_embed_layers)]
+            #dec_emb_list = [self.dec_embed_layers[i](src[...,idx].unsqueeze(-1).float()) for i, idx in enumerate(decode_cols_idx_list)]
+            dec_emb_list=[]
+            #for i, idx in enumerate(decode_cols_idx_list):
+                
+
+
+
+            #TODO: delete this!
+            #dec_emb_list_tmp = [t/t  for t in dec_emb_list]
+            #dec_emb_list = dec_emb_list_tmp
+
+            dec_emb_concat = torch.cat(dec_emb_list, axis=-1)
+
+            conti_emb_concat = torch.cat(conti_emb_list, axis=-1)
+            conti_emb_concat = conti_emb_concat.permute([0, 2, 1])
+
+            # print(f"conti_emb_concat before: {conti_emb_concat.shape}")
+            # conti_emb_concat = conti_emb_concat.permute([0, 2, 1])
+            # print(f"conti_emb_concat after: {conti_emb_concat.shape}")
+
+            #dec_emb_concat = self.dec_proj(dec_emb_concat)
+            #pdb.set_trace()
+            conti_emb_concat = self.continuous_proj(conti_emb_concat)
+            #print(f"conti_emb_concat proj : {conti_emb_concat.shape}")
+
+
+            #embedded_src = torch.cat([emb_concat, bssid_emb_concat, fq_emb_concat, conti_emb_concat], axis=-1)
+            embedded_src = torch.cat([emb_concat, bssid_emb_concat, fq_emb_concat, conti_emb_concat], axis=1)
+           
+
+            #print(f"embedded_src : {embedded_src.shape}")
+            embedded_src=embedded_src.permute([2, 0, 1])
+
+            #embedded_src=embedded_src.transpose(0, 1)
+            #embedded_tgt=dec_emb_concat.transpose(0, 1)
+
+            #pdb.set_trace()
+
+        #print(f"embedded_src : {embedded_src.shape}")
+        #
+
+
+        #input_emb = embedded_src * np.sqrt(self.ninp)
+
+        
+        input_emb = self.dropout_emb(embedded_src)
+        input_emb = self.layer_normal(input_emb)
+
+        #input_tgt_emb = self.dropout_emb(embedded_tgt)
+        #input_tgt_emb = self.layer_normal_tgt(input_tgt_emb)
+
+        #
+
+        #input_emb,_ = self.lstm(input_emb)
+
+        #embedded_src += self.postition(embedded_src)
+
+        # row_id = src[-2]
+        src_key_padding_mask = batch[0][1]
+
+        
+
+        src_mask = None#self.generate_square_subsequent_mask(input_emb.size(0)).cuda()
+        #output = self.transformer_encoder(src=input_emb, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        
+        #input_emb=input_emb.transpose(0, 1)
+        memory = self.encoder(src=input_emb, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        #print(memory)
+        #pdb.set_trace()
+        tgt_mask=None #self.generate_square_subsequent_mask(input_tgt_emb.size(0)).cuda()
+        memory_mask=self.generate_square_subsequent_mask(memory.size(0)).cuda()
+        #pdb.set_trace()
+
+        #pdb.set_trace()
+        #src_key_padding_mask=None
+        #output = self.decoder(tgt=input_tgt_emb, memory=memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
+        #                      tgt_key_padding_mask=src_key_padding_mask,
+        #                      memory_key_padding_mask=src_key_padding_mask)
+        
+        #output = self.out(output)
+        output = memory
+        #print(f"out enc: {output}")
+        #print(f"out enc: {output.shape}")
+
+        #pdb.set_trace()
+        
+        #output_xy = self.reg_out_xy(src[2], output)
+        #output_floor = self.reg_out_floor(src[2], output)
+        
+        if self.last_query_flag:
+            output_last = output[-1, ...]
+        else:
+            output_last = output
+            output_last=output_last.transpose(0, 1)
+        
+        
+        output_xy = self.decoder_xy(output_last)
+        #pdb.set_trace()
+        #output_floor = self.decoder_floor(output_last)
+        #print(f"output_xy dec: {output_xy.shape}")
+        #print(f"output_floor dec: {output_floor.shape}")
+        if self.last_query_flag:
+            output_all = torch.cat([output_xy, batch[0][4].view(-1, 1)], axis=-1)
+        else:
+            output_all = torch.cat([output_xy, batch[0][4]], axis=-1)
+       
+
+
+        #
+        
+        return output_all
+
+    def forward(self, batch):
+        out = self._forward(batch)
+        return out
+        
+    def training_step(self, batch, batch_idx):
+        
+        out = self._forward(batch)
+
+        #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
+        if self.last_query_flag==False:
+            out = out[~batch[0][1]]
+            y_true = batch[-1][~batch[0][1]]
+            weight = y_true[..., -1].view(-1, 1)
+        else:
+            y_true = batch[-1]
+            weight = batch[-1][..., -1].view(-1, 1)
+
+        loss = self.criterion(y_pred=out, y_true=y_true, weight=weight)
+        #pdb.set_trace()
+        train_batch_eval_score_dict=calcEvalScoreDict(y_true=y_true.data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+        #pdb.set_trace()
+        
+
+
+        
+        self.log('loss', loss, logger=False)
+        ret = {'loss': loss}
+
+        for k, v in train_batch_eval_score_dict.items():
+            self.log(f"train_{k}", v, logger=False)
+            ret[f"{k}"] = v
+
+        return ret
+
+
+
+    def validation_step(self, batch, batch_idx):
+
+        out = self._forward(batch)
+        if self.last_query_flag==False:
+            out = out[~batch[0][1]]
+            y_true = batch[-1][~batch[0][1]]
+            weight = y_true[..., -1].view(-1, 1)
+        else:
+            y_true = batch[-1]
+            weight = batch[-1][..., -1].view(-1, 1)
+
+        loss = self.criterion(y_pred=out, y_true=y_true, weight=weight)
+        #pdb.set_trace()
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=y_true.data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+
+
+
+        self.log('val_loss', loss, logger=False)
+        ret = {'val_loss': loss}
+
+        for k, v in val_batch_eval_score_dict.items():
+            self.log(f"val_{k}", v, logger=False)
+            ret[f"{k}"] = v
+        
+
+        #self.log('val_loss', loss)
+
+
+        return ret
+        
+    def register_batch(self, batch, prev_out, prev_mask):
+
+        renew_cols_idx_list = batch[0][3]
+
+        for i, idx in enumerate(renew_cols_idx_list):
+            if self.last_query_flag:
+                #print(batch[0][0][:, -1, idx])
+                #print(prev_out[:, i])
+                batch[0][0][:, -1, idx] = prev_out[:, i].item()
+                #print(batch[0][0][:, -1, idx])
+                #pdb.set_trace()
+            else:
+
+                #print(batch[0][0][:,(~batch[0][1]).view(-1),idx])
+                #print(prev_out[:,(~prev_mask).view(-1),i])
+                
+                batch[0][0][:,(~prev_mask).view(-1),idx]= prev_out[:,(~prev_mask).view(-1),i].double()
+                #print(batch[0][0][:,(~batch[0][1]).view(-1),idx])
+                #pdb.set_trace()
+
+                #batch[0][0][:, -1, idx] = out[:, i].item()
+
+
+        
+        return batch
+
+    def renew_batch(self, batch):
+
+        current_id = batch[0][2].item()
+
+
+        if self.prev_idx_for_renew_batch == current_id:
+            
+            batch[0][0][:, :-1,:] = self.prev_batch[0][0][:,1:,:]
+            batch = self.register_batch(batch, self.prev_out, prev_mask=self.prev_batch[0][1])
+            #pdb.set_trace()
+
+        self.prev_idx_for_renew_batch = current_id
+
+        return batch
+            
+
+
+    def test_step(self, batch, batch_idx):
+
+        #print(batch)
+        if self.oof_prediction==False:
+            batch = self.renew_batch(batch)
+
+        out = self._forward(batch)
+        
+        if self.oof_prediction==False:
+            self.prev_batch = batch #self.register_batch(batch, out)
+            self.prev_out = out #self.register_batch(batch, out)
+
+        
+        sort_idx = batch[0][4]
+        if self.last_query_flag==False:
+            out =  out[~batch[0][1]]
+            sort_idx = sort_idx[~batch[0][1]]
+        
+        return {'out': out, "sort_idx":sort_idx}
+        
+    def test_epoch_end(self, outputs):
+        #
+        sort_idx = torch.cat([o['sort_idx'] for o in outputs])
+        pred = torch.cat([o['out'] for o in outputs])
+        if self.last_query_flag==False:
+            sort_idx = sort_idx.data.cpu().detach().numpy()
+            pred = pred.data.cpu().detach().numpy()
+            df = pd.DataFrame(pred)
+            df["idx"] = sort_idx
+            gp = df.groupby("idx").mean()
+            self.final_preds = gp.values
+
+        else:
+            self.final_preds = pred[sort_idx].data.cpu().detach().numpy()
+       
+        
+        
+
+
+class LastQueryTransformer(PytorchLightningModelBase):
+    def __init__(self,
+                 n_numerical_features: int,
+                 emb_dim_pairs_list,
+                 num_bssid_features:int,
+                 d_model: int = 32*4,
+                 nhead: int = 1,
+                 num_encoder_layers: int = 1,
+                 dim_feedforward: int = 64,
+                 dropout: float = 0.1,
+                 dropout_emb: float = 0.0,
+
+                 lstm_hidden_dim:int = 128,
+                 num_lstm_layers:int = 1,
+                 dropout_lstm:float = 0.1,
+                 
+                 norm_encoder_output: bool = False,
+                 
+                 on_training_epoch_end: Optional[List[Callable]] = None,
+                 on_validation_epoch_end: Optional[List[Callable]] = None,
+                 subtract: bool = False) -> None:
+        super().__init__()
+
+
+        self.prev_idx_for_renew_batch = -1
+
+
+        self.n_numerical_features = n_numerical_features
+        self.num_bssid_features=num_bssid_features
+        
+        self.d_model = d_model
+
+
+        self.emb_layers = nn.ModuleList([nn.Embedding(m, d) for m, d in emb_dim_pairs_list])
+        self.total_cat_emb_dim = sum([d for m, d in emb_dim_pairs_list])
+        self.categorical_proj = nn.Sequential(
+            nn.Linear(self.total_cat_emb_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+        )
+
+        self.bssid_emb_layer = nn.Embedding(29241, self.d_model)
+        self.total_bssid_emb_dim = self.num_bssid_features * self.d_model
+        self.bssid_proj = nn.Sequential(
+            nn.Linear(self.total_bssid_emb_dim, self.d_model),
+            nn.LayerNorm(self.d_model),
+        )
+
+        self.conti_embed_layers = nn.ModuleList([nn.Linear(1,self.d_model,bias=False) for n in range(n_numerical_features)])
+        self.continuous_proj = nn.Sequential(
+            nn.Linear(self.d_model*n_numerical_features, self.d_model),
+            nn.LayerNorm(self.d_model),
+        )
+
+        self.emb_src_dim = self.d_model * 3
+
+        self.postition = PositionEncode(self.emb_src_dim)
+
+        self.dropout_emb = nn.Dropout(dropout_emb)
+        self.layer_normal = nn.LayerNorm(self.emb_src_dim)
+
+        #self.conv = nn.Conv1d(in_channels=self.d_emb, out_channels=self.d_model, kernel_size=1)
+
+        self.lstm = nn.LSTM(
+            input_size=self.emb_src_dim,
+            bidirectional=False,
+            hidden_size=lstm_hidden_dim,
+            num_layers=num_lstm_layers,
+            dropout=dropout_lstm)
+
+        self.emb_src_dim = lstm_hidden_dim
+        encoder_layer = LastQueryTransformerEncoderLayer(self.emb_src_dim, nhead, dim_feedforward, dropout)
+        norm = nn.LayerNorm(self.emb_src_dim) if norm_encoder_output else None
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers, norm)
+
+        self.decoder_xy = nn.Sequential(
+            nn.Linear(self.emb_src_dim, self.d_model),
+            #nn.ReLU(True),
+            nn.Linear(self.d_model, 2),
+        )
+
+
+        self.decoder_floor = nn.Linear(self.emb_src_dim, 1)
+
+        self.init_weights()
+
+    def init_weights(self):
+        initrange = 0.1
+
+        for i, l in enumerate(self.emb_layers):
+            l.weight.data.uniform_(-initrange, initrange)
+
+        for i, l in enumerate(self.conti_embed_layers):
+            l.weight.data.uniform_(-initrange, initrange)
+
+        self.bssid_emb_layer.weight.data.uniform_(-initrange, initrange)
+
+        # self.decoder.bias.data.zero_()
+        # self.decoder.weight.data.uniform_(-initrange, initrange)
+
+
+
+    def _forward(self, batch):
+
+        '''
+        S is the sequence length, N the batch size and E the Embedding Dimension (number of features).
+        src: (S, N, E)
+        src_mask: (S, S)
+        src_key_padding_mask: (N, S)
+        src_key_padding_mask is (N, S) with boolean True/False. #padにmaskするやつ
+        src_mask is (S, S) with float(’-inf’) and float(0.0). #未来の情報にmaskするやつ
+        '''
+        #
+        src = batch[0][0]
+
+
+        add_flag=False
+
+        if add_flag:
+            emb_sum = None
+            for i, emb_layer in enumerate(self.emb_layers):
+                emb = emb_layer(src[...,i])
+                if i == 0:
+                    emb_sum = emb
+                else:
+                    emb_sum += emb
+
+            num_s = len(self.emb_layers) 
+            for i, emb_layer in enumerate(self.conti_embed_layers):
+                #import pdb; pdb.set_trace()
+                emb_sum += emb_layer(src[...,i+num_s].unsqueeze(-1))
+            
+            embedded_src = emb_sum.transpose(0, 1) # (S, N, E)
+        else:
+
+           
+
+            emb_list = [emb_layer(src[...,i].long()) for i, emb_layer in enumerate(self.emb_layers)]
+            emb_concat = torch.cat(emb_list, axis=-1)
+            #print(f"emb_concat : {emb_concat.shape}")
+            emb_concat = self.categorical_proj(emb_concat)
+            #print(f"emb_concat proj: {emb_concat.shape}")
+
+            num_s = len(self.emb_layers)
+            bssid_emb = [self.bssid_emb_layer(src[..., i+num_s].long()) for i in range(self.num_bssid_features)]
+            bssid_emb_concat = torch.cat(bssid_emb, axis=-1)
+            bssid_emb_concat = self.bssid_proj(bssid_emb_concat) 
+
+            
+
+            num_s += self.num_bssid_features
+            conti_emb_list = [emb_layer(src[...,i+num_s].unsqueeze(-1).float()) for i, emb_layer in enumerate(self.conti_embed_layers)]
+            #print(f"conti_emb_list : {conti_emb_list}")
+            #print(f"conti_emb_list : {conti_emb_list[0].shape}")
+            conti_emb_concat = torch.cat(conti_emb_list, axis=-1)
+            #print(f"conti_emb_concat : {conti_emb_concat.shape}")
+
+            conti_emb_concat = self.continuous_proj(conti_emb_concat)
+            #print(f"conti_emb_concat proj : {conti_emb_concat.shape}")
+
+
+            embedded_src = torch.cat([emb_concat, bssid_emb_concat, conti_emb_concat], axis=-1)
+            #embedded_src = emb_concat
+
+            #print(f"embedded_src : {embedded_src.shape}")
+            
+
+            embedded_src=embedded_src.transpose(0, 1)
+
+            #import pdb; pdb.set_trace()
+
+        #print(f"embedded_src : {embedded_src.shape}")
+        #
+
+
+        #input_emb = embedded_src * np.sqrt(self.ninp)
+
+        
+        input_emb = self.dropout_emb(embedded_src)
+        input_emb = self.layer_normal(input_emb)
+
+        #pdb.set_trace()
+
+        input_emb,_ = self.lstm(input_emb)
+
+        #embedded_src += self.postition(embedded_src)
+
+        # row_id = src[-2]
+        src_key_padding_mask = batch[0][1]
+
+        
+
+        src_mask = None#self.generate_square_subsequent_mask(input_emb.size(0)).cuda()
+        output = self.transformer_encoder(src=input_emb, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        #output = input_emb
+        #print(f"out enc: {output}")
+        #print(f"out enc: {output.shape}")
+
+        #pdb.set_trace()
+        
+        #output_xy = self.reg_out_xy(src[2], output)
+        #output_floor = self.reg_out_floor(src[2], output)
+        
+        
+        
+        output_last = output[-1, ...]
+        output_xy = self.decoder_xy(output_last)
+        output_floor = self.decoder_floor(output_last)
+        #print(f"output_xy dec: {output_xy.shape}")
+        #print(f"output_floor dec: {output_floor.shape}")
+        
+        output_all = torch.cat([output_xy, output_floor], axis=-1)
+        #print(f"output_all dec: {output_all.shape}")
+
+        #output = self.out_act(output)
+        #print(f"out act: {output}")
+
+        # output_xy = output_xy.transpose(1, 0)
+        # output_floor = output_floor.transpose(1, 0)
+        # print(f"output_xy dec: {output_xy.shape}")
+        # print(f"output_floor dec: {output_floor.shape}")
+        #print(f"out transpose: {output.shape}")
+
+        #output = output[~src_key_padding_mask]
+        #print(f"out mask: {output.shape}")
+
+
+        #self.current_row_id = row_id[~src_key_padding_mask]
+
+        #
+        
+        return output_all
+
+    def forward(self, batch):
+        out = self._forward(batch)
+        return out
+        
+    def register_batch(self, batch, out):
+
+        renew_cols_idx_list = batch[0][3]
+
+        for i, idx in enumerate(renew_cols_idx_list):
+
+            batch[0][0][:, -1, idx] = out[:, i].item()
+
+        
+        return batch
+
+    def renew_batch(self, batch):
+
+        current_id = batch[0][2].item()
+
+
+        if self.prev_idx_for_renew_batch == current_id:
+            
+            batch[0][0][:, :-1,:] = self.prev_batch[0][0][:,1:,:]
+            #pdb.set_trace()
+
+        self.prev_idx_for_renew_batch = current_id
+
+        return batch
+            
+
+
+    def test_step(self, batch, batch_idx):
+
+        #print(batch)
+        if self.oof_prediction==False:
+            batch = self.renew_batch(batch)
+
+        out = self._forward(batch)
+        
+        if self.oof_prediction==False:
+            self.prev_batch = self.register_batch(batch, out)
+
+        
+
+        return {'out': out}
+        
+        
+        
+
+
+class LastQueryDualTransformer(pl.LightningModule):
+    def __init__(self,
+                 n_numerical_features: int,
+                 n_categorical_features: int,
+                 d_model: int = 128,
+                 nhead: int = 8,
+                 num_encoder_layers: int = 2,
+                 dim_feedforward: int = 512,
+                 dropout: float = 0.1,
+                 dropout_emb: float = 0.0,
+                 dropout_lstm: float = 0.1,
+                 num_lstm_layers: int = 2,
+                 lstm_hidden_dim: int = 128,
+                 norm_encoder_output: bool = False,
+                 cat_input_dims: Optional[Collection[int]] = None,
+                 cat_emb_dims: Optional[Union[int, Collection[int]]] = None,
+                 cat_emb_assign_map: Optional[Dict[int, int]] = None,
+                 learning_rate: float = 1e-3,
+                 on_training_epoch_end: Optional[List[Callable]] = None,
+                 on_validation_epoch_end: Optional[List[Callable]] = None,
+                 subtract: bool = False) -> None:
+        super().__init__()
+
+        self.n_numerical_features = n_numerical_features
+        self.n_categorical_features = n_categorical_features
+        self.d_model = d_model
+
+        if cat_input_dims:
+            assert cat_emb_dims is not None
+            if not isinstance(cat_emb_dims, Collection):
+                cat_emb_dims = [cat_emb_dims] * len(cat_input_dims)
+            assert len(cat_input_dims) == len(cat_emb_dims)
+
+            self.emb_layers = nn.ModuleList([nn.Embedding(d_in, d_out)
+                                             for d_in, d_out in zip(cat_input_dims, cat_emb_dims)])
+            self.d_emb = sum(cat_emb_dims) + n_numerical_features
+        else:
+            self.d_emb = n_numerical_features
+
+        self.dropout_emb = nn.Dropout(dropout_emb)
+
+        self.conv = nn.Conv1d(in_channels=self.d_emb, out_channels=self.d_model, kernel_size=1)
+
+        encoder_layer = LastQueryTransformerEncoderLayer(self.d_model, nhead, dim_feedforward, dropout)
+        norm = nn.LayerNorm(self.d_model) if norm_encoder_output else None
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers, norm)
+
+        self.seq = nn.LSTM(
+            input_size=self.d_model,
+            bidirectional=False,
+            hidden_size=lstm_hidden_dim,
+            num_layers=num_lstm_layers,
+            dropout=dropout_lstm)
+
+        self.subtract = subtract
+
+        self.cat_emb_assign_map = cat_emb_assign_map
+        self.linear = nn.Linear(3*lstm_hidden_dim if subtract else 2*lstm_hidden_dim, 1)
+
+        self.learning_rate = learning_rate
+        self.cat_emb_assign_map = cat_emb_assign_map
+
+        self._on_training_epoch_end = on_training_epoch_end
+        self._on_validation_epoch_end = on_validation_epoch_end
+
+    def get_emb(self, i) -> nn.Embedding:
+        if self.cat_emb_assign_map is not None and i in self.cat_emb_assign_map:
+            idx_emb = self.cat_emb_assign_map[i]
+        else:
+            idx_emb = i
+        return self.emb_layers[idx_emb]
+
+    def _extract(self,
+                 src_numerical: torch.Tensor,
+                 src_categorical: Optional[torch.Tensor]
+                 ) -> torch.Tensor:
+        """
+        :param src_numerical: [batch, seq_len, #features]
+        :param src_categorical: [batch, seq_len, #features]
+        """
+        if self.n_categorical_features:
+            assert src_categorical is not None
+            embed = []
+
+            for i in range(self.n_categorical_features):
+                embed.append(self.get_emb(i)(src_categorical[:, :, i]))
+
+            embed = torch.cat(embed, dim=2)
+            embed = self.dropout_emb(embed)
+            src = torch.cat([src_numerical, embed], dim=2)
+        else:
+            src = src_numerical
+
+        # src: [batch, seq_len, d_emb] => [batch, d_emb, seq_len]
+        src = src.permute([0, 2, 1])
+
+        # src: [batch, d_emb, seq_len] => [batch, d_model, seq_len]
+        src = self.conv(src)
+
+        # src: [batch, d_model, seq_len] => [seq_len, batch, d_model]
+        src = src.permute([2, 0, 1])
+
+        # memory: [seq_len, batch, d_model]
+        memory = self.encoder(src)
+
+        # hidden: [seq_len, batch, 2*lstm_hidden_dim]
+        hidden, _ = self.seq(memory)
+
+        # last_state: [batch, 2*lstm_hidden_dim]
+        last_state = hidden[-1, :, :]
+
+        return last_state
+
+    def _forward(self,
+                src_numerical1: torch.Tensor,
+                src_categorical1: Optional[torch.Tensor],
+                src_numerical2: torch.Tensor,
+                src_categorical2: Optional[torch.Tensor],
+
+                ):
+        # out1, out2 : [batch, lstm_hidden_dim]
+        out1 = self._extract(src_numerical1, src_categorical1)
+        out2 = self._extract(src_numerical2, src_categorical2)
+
+        if self.subtract:
+            out = torch.cat([out1, out2, out1 - out2], dim=1)
+        else:
+            out = torch.cat([out1, out2], dim=1)
+
+        out = self.linear(out)
+
+        return out[:, 0]
+
+    def forward(self,
+                src_numerical1: torch.Tensor,
+                src_categorical1: Optional[torch.Tensor],
+                src_numerical2: torch.Tensor,
+                src_categorical2: Optional[torch.Tensor]
+                ):
+        out = self._forward(src_numerical1, src_categorical1, src_numerical2, src_categorical2)
+        return torch.sigmoid(out)
+
+    def training_step(self, batch, batch_idx):
+        src_numerical1, src_categorical1, src_numerical2, src_categorical2, y, y_w = batch
+
+        out = self._forward(src_numerical1, src_categorical1, src_numerical2, src_categorical2)
+
+        loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
+
+        self.log('loss', loss)
+        return {'loss': loss}
+
+    def validation_step(self, batch, batch_idx):
+        src_numerical1, src_categorical1, src_numerical2, src_categorical2, y, y_w = batch
+
+        out = self._forward(src_numerical1, src_categorical1, src_numerical2, src_categorical2)
+
+        loss = nn.BCEWithLogitsLoss()(out, y)
+
+        self.log('val_loss', loss)
+        return {'val_loss': loss}
+
+    def test_step(self, batch, batch_idx):
+        src_numerical1, src_categorical1, src_numerical2, src_categorical2, _, _ = batch
+
+        out = self._forward(src_numerical1, src_categorical1, src_numerical2, src_categorical2)
+
+        return {'out': out}
+
+    def training_epoch_end(self, outputs):
+        loss = torch.stack([o['loss'] for o in outputs]).mean()
+
+        if self._on_training_epoch_end is not None:
+            for f in self._on_training_epoch_end:
+                f(self.current_epoch, loss)
+
+    def validation_epoch_end(self, outputs):
+        loss = torch.stack([o['val_loss'] for o in outputs]).mean()
+
+        if self._on_validation_epoch_end is not None:
+            for f in self._on_validation_epoch_end:
+                f(self.current_epoch, loss)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        return optimizer
+
+
+class RegressionHead(nn.Module):
+    
+    def __init__(self, site_dim, d_model, nhead, output_dim):
+        super().__init__()
+        
+        
+        self.site_emb_layer = nn.Embedding(site_dim, d_model)
+       
+        self.multihead_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead)
+        
+        self.out_layer = nn.Linear(d_model, output_dim)
+        
+        
+    def forward(self, site_x, memory):
+        
+        site_emb =self.site_emb_layer(site_x)
+        site_emb=site_emb.transpose(0, 1)
+
+        
+        
+        attn_output, attn_output_weights = self.multihead_attn(query=site_emb, key=memory, value=memory)
+        
+        
+        
+        out = self.out_layer(attn_output[0])
+        
+       
+        return out
+            
 
 
 class Transformer_DNN(nn.Module):
@@ -490,43 +2342,63 @@ class Transformer_DNN(nn.Module):
                 emb_dim_pairs_list,
                 num_continuout_features,
                 dropout:float =0.5,
+                site_dim=24,
                 ):
         
         super(Transformer_DNN, self).__init__()
 
         #self.current_row_id=0
-
-        self.ninp = ninp
+        
+        s=1
+        self.ninp = ninp*s
 
         self.model_type = 'Transformer'
-        encoder_layers = TransformerEncoderLayer(d_model=ninp, 
+        encoder_layers = TransformerEncoderLayer(d_model=self.ninp, 
                                                  nhead=nhead, 
                                                  dim_feedforward=nhid, 
                                                  dropout=dropout, 
                                                  activation='relu')
         self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
 
-        self.emb_layers = nn.ModuleList([nn.Embedding(m, ninp) for m, _ in emb_dim_pairs_list])
+        self.emb_layers = nn.ModuleList([nn.Embedding(m, self.ninp) for m, _ in emb_dim_pairs_list])
         self.categorical_proj = nn.Sequential(
-            nn.Linear(ninp*len(emb_dim_pairs_list), ninp//2),
-            nn.LayerNorm(ninp//2),
+            nn.Linear(self.ninp*len(emb_dim_pairs_list), self.ninp//2),
+            nn.LayerNorm(self.ninp//2),
         )  
 
 
-        self.conti_embed_layers = nn.ModuleList([nn.Linear(1,ninp,bias=False) for n in range(num_continuout_features)])
+        self.conti_embed_layers = nn.ModuleList([nn.Linear(1,self.ninp,bias=False) for n in range(num_continuout_features)])
         self.continuous_proj = nn.Sequential(
-            nn.Linear(ninp*num_continuout_features, ninp//2),
-            nn.LayerNorm(ninp//2),
+            nn.Linear(self.ninp*num_continuout_features, self.ninp//2),
+            nn.LayerNorm(self.ninp//2),
         )
         
         
-        self.postition = PositionEncode(self.ninp)
+        #self.postition = PositionEncode(self.ninp)
 
-        self.decoder = nn.Linear(ninp, 1)
-        self.out_act = nn.Sigmoid()
+        # self.decoder_xy = nn.Linear(ninp, 2)
+        # self.decoder_floor = nn.Linear(ninp, 1)
+        # self.out_act = nn.Sigmoid()
+        self.reg_out_xy = RegressionHead(site_dim=site_dim, d_model=self.ninp, nhead=nhead, output_dim=2)
+        self.reg_out_floor = RegressionHead(site_dim=site_dim, d_model=self.ninp, nhead=nhead, output_dim=1)
 
         self.layer_normal = nn.LayerNorm(self.ninp)
         self.dropout = nn.Dropout(p=dropout)
+
+        
+        
+        
+        self.proj = nn.Linear(self.ninp*len(emb_dim_pairs_list)+self.ninp*num_continuout_features, self.ninp)
+        
+        
+        self.site_emb_layer = nn.Embedding(site_dim, 2)
+        self.dropout_wide = nn.Dropout(p=dropout)
+        self.layer_normal_wide = nn.LayerNorm(ninp*100+2)
+        self.proj_wide = nn.Linear(ninp*100+2, self.ninp)
+        # self.proj_wide2 = nn.Linear(self.ninp, 128)
+        # self.proj_wide3 = nn.Linear(128, 16)
+        self.proj_out_xy = nn.Linear(self.ninp, 2)
+        self.proj_out_floor = nn.Linear(self.ninp, 1)
 
         self.init_weights()
 
@@ -544,10 +2416,102 @@ class Transformer_DNN(nn.Module):
         for i, l in enumerate(self.conti_embed_layers):
             l.weight.data.uniform_(-initrange, initrange)
 
+        self.site_emb_layer.weight.data.uniform_(-initrange, initrange)
+
         # self.decoder.bias.data.zero_()
         # self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src):
+        
+        emb_list = [emb_layer(src[i]) for i, emb_layer in enumerate(self.emb_layers)]
+        emb_concat = torch.cat(emb_list, axis=-1)
+        emb_concat = emb_concat.view(emb_concat.shape[0], -1)
+        #print(emb_concat.shape)
+        
+        
+        num_s = len(self.emb_layers) 
+        conti_emb_list = [emb_layer(src[i+num_s].unsqueeze(-1)) for i, emb_layer in enumerate(self.conti_embed_layers)]
+        conti_emb_concat = torch.cat(conti_emb_list, axis=-1)
+        conti_emb_concat = conti_emb_concat.view(conti_emb_concat.shape[0], -1)
+        #print(conti_emb_concat.shape)
+        
+        site_emb =self.site_emb_layer(src[2])
+        site_emb = site_emb.view(site_emb.shape[0], -1)
+        #print(site_emb.shape)
+        
+        
+        embedded_src = torch.cat([emb_concat, conti_emb_concat, site_emb], axis=-1)
+        x = self.dropout_wide(embedded_src)
+        x = self.layer_normal_wide(x)
+        x = self.proj_wide(x)
+        #x = self.proj_wide2(x)
+        #x = self.proj_wide3(x)
+        output_xy = self.proj_out_xy(x)
+        output_floor = self.proj_out_floor(x)
+        output_all = torch.cat([output_xy, output_floor], axis=-1)
+        
+        return output_all
+        #import pdb; pdb.set_trace()
+        
+        
+        
+        
+
+    def __forward(self, src):
+        
+        emb_list = [emb_layer(src[i]) for i, emb_layer in enumerate(self.emb_layers)]
+        emb_concat = torch.cat(emb_list, axis=-1)
+        
+        
+        num_s = len(self.emb_layers) 
+        conti_emb_list = [emb_layer(src[i+num_s].unsqueeze(-1)) for i, emb_layer in enumerate(self.conti_embed_layers)]
+        conti_emb_concat = torch.cat(conti_emb_list, axis=-1)
+        
+        embedded_src = torch.cat([emb_concat, conti_emb_concat], axis=-1)
+        
+        embedded_src = self.proj(embedded_src)
+        
+        embedded_src=embedded_src.transpose(0, 1)
+        
+        
+        input_emb = self.dropout(embedded_src)
+        input_emb = self.layer_normal(input_emb)
+
+        
+
+        # row_id = src[-2]
+        src_key_padding_mask = None
+
+        src_mask = None#self.generate_square_subsequent_mask(input_emb.size(0)).cuda()
+        #output = self.transformer_encoder(src=input_emb, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        output = input_emb
+        #print(f"out enc: {output}")
+        #print(f"out enc: {output.shape}")
+        
+        output_xy = self.reg_out_xy(src[2], output)
+        output_floor = self.reg_out_floor(src[2], output)
+        
+        
+        
+        #output0 = output[0, ...]
+        #output_xy = self.decoder_xy(output0)
+        #output_floor = self.decoder_floor(output0)
+        #print(f"output_xy dec: {output_xy.shape}")
+        #print(f"output_floor dec: {output_floor.shape}")
+        
+        output_all = torch.cat([output_xy, output_floor], axis=-1)
+        
+        
+        return output_all
+        
+        
+        
+        
+        
+        
+        
+
+    def _forward(self, src):
 
         '''
         S is the sequence length, N the batch size and E the Embedding Dimension (number of features).
@@ -578,6 +2542,7 @@ class Transformer_DNN(nn.Module):
             embedded_src = emb_sum.transpose(0, 1) # (S, N, E)
         else:
             
+
             emb_list = [emb_layer(src[i]) for i, emb_layer in enumerate(self.emb_layers)]
             emb_concat = torch.cat(emb_list, axis=-1)
             #print(f"emb_concat : {emb_concat.shape}")
@@ -596,6 +2561,7 @@ class Transformer_DNN(nn.Module):
 
             
             embedded_src = torch.cat([emb_concat, conti_emb_concat], axis=-1)
+            #embedded_src = emb_concat
 
             #print(f"embedded_src : {embedded_src.shape}")
 
@@ -610,39 +2576,53 @@ class Transformer_DNN(nn.Module):
 
         #input_emb = embedded_src * np.sqrt(self.ninp)
 
-        embedded_src += self.postition(embedded_src)
+        #embedded_src += self.postition(embedded_src)
         input_emb = self.dropout(embedded_src)
         input_emb = self.layer_normal(input_emb)
 
         
 
         # row_id = src[-2]
-        src_key_padding_mask = src[-1]
+        src_key_padding_mask = None
 
-        src_mask = self.generate_square_subsequent_mask(input_emb.size(0)).cuda()
+        src_mask = None#self.generate_square_subsequent_mask(input_emb.size(0)).cuda()
         output = self.transformer_encoder(src=input_emb, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
         #output = input_emb
         #print(f"out enc: {output}")
-        output = self.decoder(output)
-        #print(f"out dec: {output}")
+        #print(f"out enc: {output.shape}")
+        
+        output_xy = self.reg_out_xy(src[2], output)
+        output_floor = self.reg_out_floor(src[2], output)
+        
+        
+        
+        #output0 = output[0, ...]
+        #output_xy = self.decoder_xy(output0)
+        #output_floor = self.decoder_floor(output0)
+        #print(f"output_xy dec: {output_xy.shape}")
+        #print(f"output_floor dec: {output_floor.shape}")
+        
+        output_all = torch.cat([output_xy, output_floor], axis=-1)
+        #print(f"output_all dec: {output_all.shape}")
 
-        output = self.out_act(output)
+        #output = self.out_act(output)
         #print(f"out act: {output}")
 
-        output = output.transpose(1, 0)
+        # output_xy = output_xy.transpose(1, 0)
+        # output_floor = output_floor.transpose(1, 0)
+        # print(f"output_xy dec: {output_xy.shape}")
+        # print(f"output_floor dec: {output_floor.shape}")
         #print(f"out transpose: {output.shape}")
 
-        output = output[~src_key_padding_mask]
+        #output = output[~src_key_padding_mask]
         #print(f"out mask: {output.shape}")
 
 
         #self.current_row_id = row_id[~src_key_padding_mask]
 
-        #import pdb; pdb.set_trace()
-        #print(output)
-            
+        #
         
-        return output
+        return output_all
 
     def setSaveParams(self, epoch, val_score):
         self.save_param_epoch_=epoch

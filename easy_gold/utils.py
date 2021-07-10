@@ -92,7 +92,7 @@ else:
     import warnings
     warnings.simplefilter('ignore')
 
-PROJECT_NAME = "titanic"
+PROJECT_NAME = "atma11"
 INPUT_DIR = Path(f"../input/{PROJECT_NAME}" if ON_KAGGLE else "../data/raw")
 PROC_DIR = Path("." if ON_KAGGLE else "../data/proc")
 LOG_DIR = ("." if ON_KAGGLE else "../data/log")
@@ -1491,6 +1491,7 @@ def comparisonSub():
     sns.set_style(style="ticks")
     sns.pairplot(df_vis, hue="sub_no")
     plt.savefig(PATH_TO_GRAPH_DIR/"seaborntest.png") 
+
 
 
     

@@ -22,7 +22,7 @@ from utils import *
 #from m5_utils import my_squared_error, loss_wrmsse, torch_wrmsse, wrmsse_simple, test3, custom_asymmetric_train, my_loss_rmse, visualizeCompLV
 from model_wrappers import *
 from eda import procEDA
-from MyFoldSplit import TournamentGroupKFold, DummyKfold, SeasonKFold
+from MyFoldSplit import TournamentGroupKFold, DummyKfold, SeasonKFold, myStratifiedKFold, myStratifiedKFoldWithGroupID, siteStratifiedPathGroupKFold, StratifiedKFoldWithGroupID
 #from preprocess import procTest
 
 
@@ -229,7 +229,7 @@ class RegressorModel(object):
         # X.drop(columns=drop_cols, inplace=True)
         # cpu_stats("after X[self.columns]")
 
-        if not ON_KAGGLE:
+        if (not ON_KAGGLE) and (params["no_wandb"]==False):
             wb_run_name_base = wandb.util.generate_id()
 
 
@@ -289,8 +289,8 @@ class RegressorModel(object):
                 group = X['Season']
 
             fold_y = y
-            if folds.__class__.__name__ == "StratifiedKFoldWithGroupID":
-                fold_y = X['user_id']
+            #if folds.__class__.__name__ == "StratifiedKFoldWithGroupID":
+            #    fold_y = X['user_id']
 
             if params["mid_save"]:
                 X.to_pickle(PROC_DIR / f'mid_save_X.pkl')
@@ -358,7 +358,7 @@ class RegressorModel(object):
                     else:
                         y_train, y_valid = y.iloc[train_index], y.iloc[valid_index]
 
-                        
+               
 
 
                     self.valid_indices.extend(valid_index)
@@ -404,7 +404,7 @@ class RegressorModel(object):
                     model.feature_importances_ = np.zeros(len(X_train.columns)) #X_train.columns))
 
                 if ret < 0:
-                    if not ON_KAGGLE:
+                    if (not ON_KAGGLE) and (params["no_wandb"]==False):
                         params["wb_run_name"] = wb_run_name_base + f"_fold_{fold_n}"
 
                     model.fit(X_train, y_train, X_valid, y_valid, X_hold, y_holdout, params=params)
@@ -416,9 +416,10 @@ class RegressorModel(object):
                 if not adversarial:
                     if X_valid is not None:
 
-                        tmp_pred= model.predict(X_valid)
+                        tmp_pred= model.predict(X_valid, oof_flag=True)
                         if isinstance(tmp_pred, np.ndarray):
                             tmp_pred = tmp_pred.reshape(-1, n_target)
+                            print(tmp_pred.shape)
 
 
                         if len(valid_index) == tmp_pred.shape[0]:
@@ -581,7 +582,7 @@ class RegressorModel(object):
                 slack.notify(text=print_text)
             self.scores[d] = np.mean(scores)
 
-    def predict(self, X_test, proba:bool = False, averaging: str = 'usual'):
+    def predict(self, X_test, proba:bool = False, averaging: str = 'usual', arg_max=False):
         """
         Make prediction
 
@@ -659,7 +660,13 @@ class RegressorModel(object):
             elif averaging == 'rank':
                 full_prediction += pd.Series(y_pred).rank().values
 
-        return full_prediction / len(self.models)
+        full_prediction = full_prediction / len(self.models)
+
+        if arg_max:
+            #pdb.set_trace()
+            full_prediction = np.argmax(full_prediction, axis=1)
+
+        return full_prediction
 
     def plot_feature_importance(self, drop_null_importance: bool = True, top_n: int = 10):
         """
@@ -819,7 +826,7 @@ class MainTransformer(BaseEstimator, TransformerMixin):
             for col in self.standard_scaler_cols_:
                 self.sc_.fit(data.loc[:, col].values.reshape(-1, 1))
                 data.loc[:, col] = self.sc_.transform(data.loc[:, col].values.reshape(-1, 1))
-                print(f"transform sc_ ; {col} ")
+                print(f"transform sc_ ; {col} : {data[col].dtype} ")
 
 
             #data[self.standard_scaler_cols_] = pd.DataFrame(self.sc_.transform(data[self.standard_scaler_cols_]), columns=self.standard_scaler_cols_)
@@ -1099,6 +1106,7 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
 
     params=model_wrapper.initial_params
     params["eval_metric_func_dict__"] = eval_metric_func_dict
+    params["eval_metric"] = eval_metric_name
     params["target_name"] = target_col_list
     params["target_name_idx"] = setting_params["target_idx"]
     params["n_estimators"] = setting_params["epochs"]
@@ -1106,6 +1114,7 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
     params["early_stopping_rounds"] = setting_params["early_stopping_rounds"]
     params["learning_rate"] = setting_params["learning_rate"]
     params["batch_size"] = setting_params["batch_size"]
+    params["num_workers"] = setting_params["num_workers"]
     params["verbose"] = setting_params["verbose"]
     params["model_dir_name"] = setting_params["model_dir_name"]
     params["pred_only"] = setting_params["pred_only"]
@@ -1113,10 +1122,13 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
     params["mid_save"] = setting_params["mid_save"]
     params["use_old_file"] = setting_params["use_old_file"]
     params["fold2"] = setting_params["fold2"]
+    params["num_class"] = setting_params["num_class"]
+    params["no_wandb"] = setting_params["no_wandb"]
 
     params["use_columns"] = use_columns
 
-    if not ON_KAGGLE:
+    if (not ON_KAGGLE) and (params["no_wandb"]==False):
+    
         # initialize a new wandb project
         params["wb_group_name"] = params["model_dir_name"]#wandb.util.generate_id()
 
@@ -1125,7 +1137,10 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
 
 
 
-    model.fit(X=df_X_train, y=df_y_train, X_holdout=df_X_hold, y_holdout=df_y_hold, folds=_folds, eval_metric=eval_metric_name, params=params, preprocesser=main_transformer, transformers=transformer_dict, post_processor=post_processor, permutation_feature=permutation_feature)
+    model.fit(X=df_X_train, y=df_y_train, X_holdout=df_X_hold, y_holdout=df_y_hold, folds=_folds, 
+            eval_metric=eval_metric_name, params=params, preprocesser=main_transformer, transformers=transformer_dict, 
+            post_processor=post_processor, permutation_feature=permutation_feature, 
+            plot=setting_params["train_plot"])
 
     df_oof = model.df_oof.iloc[model.valid_indices]
 
@@ -1173,8 +1188,11 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
         gc.collect()
         cpu_stats("after df_X_train, df_y_train  del")
 
+        if (setting_params["mode"] == "lgb"):
+            y_pred = model.predict(df_test, proba=True, arg_max=True)
+        else:
 
-        y_pred = model.predict(df_test)
+            y_pred = model.predict(df_test)
         df_y_pred = pd.DataFrame(y_pred, index=df_test.index, columns=target_col_list)
         print(f"df_y_pred : {df_y_pred}")
 
@@ -1369,15 +1387,34 @@ def interpolationSpline(df_y_pred, df_oof, true_y):
     
     return y_pred_fit, spline_fit
 
+def calcWeight(df_train, df_test):
+
+    test_gp = df_test.groupby("site_id")["path"].agg({"count", "nunique"})
+    #test_gp["weight_nunique"] = test_gp["nunique"].sum()/test_gp["nunique"]
+    test_gp["weight_nunique"] = test_gp["count"].sum()/test_gp["count"]
+
+    df_train["floor"] = df_train["site_id"].map(test_gp["weight_nunique"])
+
+
+
+    return df_train, df_test
+
+
+gl_norm_dict = {}
+
 def preproc(df_train, df_test, target_col, setting_params):
 
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
         pass
-    else:
+    elif (setting_params["mode"]=="lgb"):
 
         pass
 
+    else:
+        pass
+        
 
+        #df_train, df_test = calcWeight(df_train, df_test)
 
     return df_train, df_test
 
@@ -1387,11 +1424,12 @@ def postproc(df_y_pred, df_oof, df_train, df_test, setting_params):
 
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
         pass
+    elif (setting_params["mode"]=="lgb"):
+        pass
     else:
         
-        df_y_pred = (df_y_pred > 0.5).astype(int)
-
-
+        
+        pass
 
 
     return df_y_pred, df_oof
@@ -1426,13 +1464,22 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     n_fold = setting_params["fold"]
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
         folds = KFold(n_fold)
+
+    elif setting_params["mode"]=="lgb":
+        #folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="path")
+        #folds = myStratifiedKFoldWithGroupID(n_splits=n_fold, shuffle=False, group_id_col="path", stratified_target_id="floor")
+        folds = siteStratifiedPathGroupKFold(df_test=df_test, n_splits=n_fold, group_id_col="path", stratified_target_id="site_id")
+
+
     else:
 
-        #folds = StratifiedKFold(n_splits=n_fold, shuffle=True, random_state=2020)
+        #folds = myStratifiedKFold(n_splits=n_fold, shuffle=False, random_state=2020, stratified_col="site_id")
+        
         #folds = Year2KFold(date_column='point_of_deal', test_years=2, clipping=False, split_type=2, n_splits=n_fold)
-        #folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="id")
+        #folds = myStratifiedKFoldWithGroupID(n_splits=n_fold, shuffle=False, group_id_col="art_series_id", stratified_target_id="target")
+        folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="art_series_id")
 
-        folds = KFold(n_fold)
+        #folds = KFold(n_fold)
 
        # folds = GroupKFold(n_fold)
 
@@ -1471,21 +1518,52 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
         if setting_params["type"]=="classification":
             #use defalut lgb eval metric
-            eval_metric_name = 'binary_logloss'
+            eval_metric_name = 'multi_logloss'
             eval_metric_func_dict= {eval_metric_name:eval_metric_name}
+
+            # def my_eval(y_true, y_pred):
+
+            #     ans = np.argmax(y_pred.reshape(y_true.shape[0], -1), axis=1)
+                
+                
+            #     ret =  (np.abs(ans-y_true)).mean()
+            #     return 'comp_eval', ret, False
+            # eval_metric_name = 'comp_eval'
+            # eval_metric_func_dict= {eval_metric_name:my_eval}
+           
+
+
+
         else:
             eval_metric_name =  'l1'
             eval_metric_func_dict= {eval_metric_name:eval_metric_name}
             
 
     elif (setting_params["mode"]=="nn"):
-
-        def my_eval(y_pred, y_true):
-
-            return roc_auc_score(y_true=y_true, y_score=y_pred)
+        
+        def comp_metric(xhat, yhat, fhat, x, y, f):
 
             
-        eval_metric_name = 'AUC'
+   
+            diff_x = (xhat-x) * gl_norm_dict["x_norm"] 
+            diff_y = (yhat-y) * gl_norm_dict["y_norm"] 
+
+            # print(f"norms : {gl_norm_dict['x_norm']}, {gl_norm_dict['y_norm']}")
+            # print(f"diff_x : {x}")
+            # print(f"diff_y : {y}")
+
+            intermediate = np.sqrt(np.power(diff_x, 2) + np.power(diff_y, 2))# + 15 * np.abs(fhat-f)
+            return intermediate.sum()/xhat.shape[0]
+        
+        from sklearn.metrics import mean_squared_error
+        def my_eval(y_pred, y_true):
+
+            
+            
+            return np.sqrt(mean_squared_error(y_true, y_pred))
+
+            
+        eval_metric_name = 'rmse'
         eval_metric_func_dict= {eval_metric_name:my_eval}
 
 
@@ -1541,16 +1619,19 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     if (setting_params["mode"]=="lgb") | (setting_params["mode"]=="lgb2"):
 
         drop_cols=[
+            'timestamp', 
+            'near_floor',
+            
+             'first_ts', 'last_ts', 
 
        
             ]
 
-
+     
 
 
         use_columns=list(df_test.columns)
 
-        #drop_cols+=getColumnsFromParts(["concat"], use_columns)
 
 
         for col in drop_cols:
@@ -1558,20 +1639,27 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
                 use_columns.remove(col)
 
         #groupK_id_list = ["user_id"]
-        id_list = [ ]#['team1ID', 'team2ID',]
-        time_list = [ ]
+        id_list = ['path', "site_id", ]#['team1ID', 'team2ID',]
+        time_list = ['first_ts', 'last_ts', 'timestamp',  ]
 
+        rssi_list = getColumnsFromParts(["wifi_rssi", "ib_rssi"], use_columns)
+        #rssi_list = getColumnsFromParts(["ib_rssi"], use_columns)
+        #for col in rssi_list:
+            #if df_train[col].dtype=="object":
+            #    print(f"{col} : {df_train[col].dtype}")
+            #df_train[col] = df_train[col].astype(int)
+            #df_test[col] = df_test[col].astype(int)
 
-        embedding_features_list= ["IsAlone", "label_Sex", "label_Embarked",] + id_list
-        continuous_features_list = [
-                                    "FamilySize",
-                                    "fillna_Age",
-                                    "fillna_Fare",
+        #pdb.set_trace()
+        embedding_features_list= id_list #+ #['brand', 'model', 'android_name', 'api_level', 'version_name', 'version_code'] + id_list
+        continuous_features_list = rssi_list +time_list
+                                # + [
+                                #    #'wifi_ssid', 'wifi_bssid', 'wifi_rssi', 'wifi_frequency', 'wifi_lastseen_ts', 
+                                #    # "mean_max_floor", "mean_max_floor_by_path", "count_max_floor", "count_max_floor_by_path",
                                     
                                     
-                                    
 
-                                    ]+ time_list
+                                #     ]+ time_list# + has_floor_list
 
 
 
@@ -1601,47 +1689,23 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
         use_columns=list(df_test.columns)
 
-        id_list = [ "user_id", "task_container_id",]
-        time_list = [ 
-                    #'prior_question_elapsed_time',  
-                    "diff_prev_timestamp_to_timestamp_uid_cid",
-                    #"prev_prev_explanation_reading_time",
-                    #"mean_question_elapsed_time_by_part",
-                    #"std_question_elapsed_time_by_part",
-                    #"mean_question_elapsed_time_by_content_id",
-                    #"std_question_elapsed_time_by_content_id",
-                    "diff_mean_question_elapsed_time_by_part_to_cid",
-                    "diff_std_question_elapsed_time_by_part_to_cid",
-                    "diff_mean_question_elapsed_time_by_part_to_prev_question_elapsed_time_uid_cid",
-                    "diff_mean_question_elapsed_time_by_content_id_to_prev_question_elapsed_time_uid_cid",
+        id_list = ["image_name"]
+        time_list = []
 
-                    
-                    ]
-
-
-        sequence_list= ["content_id" , "part", "prior_question_had_explanation", 
-                        "prev_answered_correctly_user_id",
-                        "prev_answered_correctly_uid_cid",
-                        "prev_answered_correctly_uid_part_chunk",
-                        
-                        ] 
-        continuous_features_list = ["prev_answer_rate_user_id", 
-                                    "prev_answer_rate_uid_part", 
-                                    "prev_answer_rate_uid_cid",
-                                    "prev_answer_rate_uid_part_chunk",
-                                    ] + time_list
+        sequence_list= []
+        continuous_features_list = []
         scale_features = time_list
         target_encode_features=[]
 
-        final_use_columns = id_list+sequence_list+continuous_features_list
+        final_use_columns = id_list
 
-        if setting_params["pred_only"]==False:
-            dropcols = [col for col in df_train.columns if col not in final_use_columns]
-            dropcols.remove(setting_params["target"][0])
-            df_train.drop(columns=dropcols, inplace=True)
+        # if setting_params["pred_only"]==False:
+        #     dropcols = [col for col in df_train.columns if col not in final_use_columns]
+        #     dropcols.remove(setting_params["target"][0])
+        #     df_train.drop(columns=dropcols, inplace=True)
 
             
-            #df_train.to_pickle(PROC_DIR/"df_proc_train_nn.pkl")
+        #     #df_train.to_pickle(PROC_DIR/"df_proc_train_nn.pkl")
 
 
     elif (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
@@ -1657,6 +1721,11 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
         final_mt=mt_none
 
+    elif (setting_params["mode"]=="lgb") :
+        
+        mt_none = MainTransformer()
+
+        final_mt=mt_none
     else:
 
 
@@ -1673,7 +1742,8 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
         mt_DNN = MainTransformer(
             #log_list=scale_features,
-            standard_scaler_cols = scale_features,
+            #minMax_scaler_cols=scale_features,
+            #standard_scaler_cols = rssi_list+scale_features,
             #label_encoding_cols=embedding_features_list
             )
 
@@ -1683,7 +1753,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         #mt_cat = MainTransformer(label_encoding_cols=embedding_features_list)
 
 
-        final_mt = mt_none
+        final_mt = mt_DNN
 
 
 
@@ -1709,6 +1779,10 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         ft_none = FeatureTransformer()
         transformers0 = {'ft': ft_none}
         final_tf_dict = transformers0
+    elif (setting_params["mode"]=="lgb") :
+        ft = DropFeatureTransformer(drop_columns=["path"])
+        transformers1 = {'ft': ft}
+        final_tf_dict = transformers1
 
     else:
 
@@ -1720,7 +1794,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         #tet = TargetEncodingTransormer(target_encoding_cols)
         #transformers3 = {'targetEncoding': tet}
 
-        ft = DropFeatureTransformer(drop_columns=["Season"])
+        ft = DropFeatureTransformer(drop_columns=["t1_wifi"])
         transformers1 = {'ft': ft}
         #transformers4 = {'ft': ft, 'targetEncoding': tet}
 
@@ -1787,9 +1861,14 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # df_all = pd.concat([df_train, df_test], sort=False)
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
-        # model_wrapper = model_lstm_wrapper
+        model_wrapper = ResNet_Wrapper()
 
-        model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+        #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+        #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+
+        
+
+
 
 
 
@@ -1838,9 +1917,46 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     return df_y_pred, df_oof, valid_score, model_name
 
 
+def saveSimple(path_to_output, df_final_pred):
+
+    sample_submission = pd.read_csv(INPUT_DIR/'submission99.csv')
+    sample_submission['building'] = [x.split('_')[0] for x in sample_submission['site_path_timestamp']]
+    sample_submission['path_id'] = [x.split('_')[1] for x in sample_submission['site_path_timestamp']]
+    sample_submission['timestamp'] = [x.split('_')[2] for x in sample_submission['site_path_timestamp']]
+
+    df_pred = df_final_pred
+    for i, row in sample_submission.iterrows():
+        path_id = row["path_id"]
+        sub_ts = int(row["timestamp"])
+        df_path = df_pred.loc[df_pred["path_id"]==path_id] #.sort_values("t1_wifi")
+        np_ts = df_path["t1_wifi"].values
+        insert_id = np.searchsorted(np_ts, sub_ts)
+        if insert_id >= len(np_ts):
+            #print(f"sub_ts : {sub_ts}, insert_id: {insert_id}, np_ts:{np_ts}")
+            insert_id = len(np_ts) - 1
+        #print(f"sub_ts : {sub_ts}, insert_id: {insert_id}, np_ts:{np_ts}")
+        #print(df_path.iloc[insert_id]["x"])
+        sample_submission.loc[i,"x"] = df_path.iloc[insert_id]["x"]
+        sample_submission.loc[i,"y"] = df_path.iloc[insert_id]["y"]
+
+    sample_submission[["site_path_timestamp", "x", "y", "floor"]].to_csv(path_to_output.parent/f"{path_to_output.stem}_simple.csv", index=False)
 
 
-def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred, df_oof, valid_score, model_name):
+def savefloors(path_to_output, df_final_pred):
+    sample_submission = pd.read_csv(INPUT_DIR/'submission99.csv')
+    sample_submission['path'] = [x.split('_')[1] for x in sample_submission['site_path_timestamp']]
+
+    gp = sample_submission.groupby("path")["floor"].agg(lambda x: x.mode())
+
+    df_final_pred = df_final_pred.set_index("path")
+    df_final_pred["floor_99"] = gp
+
+    df_final_pred = df_final_pred.reset_index()
+    df_final_pred.to_csv(path_to_output.parent/f"{path_to_output.stem}_simple.csv", index=False)
+
+
+
+def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred, df_oof, valid_score, model_name, setting_params):
 
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = "{}_{}--{:.6f}--".format(now, model_name,valid_score)
@@ -1865,7 +1981,10 @@ def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred,
     path_to_output = path_to_output_dir/"submission.csv" if ON_KAGGLE else path_to_output_dir / "{}_submission.csv".format(prefix)
     df_final_pred.to_csv(path_to_output, index=False)
 
-
+    if setting_params["mode"]=="lgb":
+        savefloors(path_to_output, df_final_pred)
+    else:
+        saveSimple(path_to_output, df_final_pred)
 
     logger.debug("df_save_oof:{}".format(df_save_oof.shape))
     logger.debug("df_submit:{}".format(df_final_pred.shape))
@@ -1917,20 +2036,20 @@ def procSkipTarget(target_col, df_oof, df_y_pred, df_train_targets):
 def main(setting_params):
 
     mode=setting_params["mode"]
-    setting_params["index"] = "PassengerId"
+    setting_params["index"] = "object_id"
+    
+    target_cols= ['target']
+   
+    setting_params["num_class"] = len(target_cols)
 
 
-
-    ppath_to_proc_dir = PROC_DIR
-
-        
 
     if setting_params["pred_only"]==False:
         
         if mode == "ave":
-            mode = "lgb"
+            mode = "nn"
 
-        df_train = pd.read_pickle(ppath_to_proc_dir / f'df_proc_train_{mode}.pkl')
+        df_train = pd.read_pickle(PROC_DIR / f'df_proc_train.pkl')
         df_train.index.name = setting_params["index"]
 
 
@@ -1941,11 +2060,13 @@ def main(setting_params):
 
 
 
-    df_test = pd.read_pickle(ppath_to_proc_dir / f'df_proc_test_{mode}.pkl')
+    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test.pkl')
 
    
     
-    df_submit = pd.read_csv(INPUT_DIR/f"gender_submission.csv", index_col=0)
+    df_submit = pd.read_csv(INPUT_DIR/f"atmaCup#11_sample_submission.csv")
+    df_submit.index = df_test.index
+
 
 
     logger.debug("df_test:{}".format(df_test.shape))
@@ -1958,7 +2079,7 @@ def main(setting_params):
 
 
 
-    target_cols=['Survived']
+    
 
     setting_params["target_idx"] = 0
     setting_params["target"] = target_cols
@@ -1968,35 +2089,41 @@ def main(setting_params):
         df_y_pred_each, df_oof, valid_score, model_name = trainMain(df_train, df_test, target_cols, setting_params)
         
 
-        
+        if setting_params["debug"]:
 
-        df_y_pred.loc[df_y_pred_each.index, target_cols] = df_y_pred_each[target_cols]
+            df_y_pred.loc[df_y_pred_each.index, target_cols] = df_y_pred_each[target_cols]
+        else:
+            df_y_pred = df_y_pred_each#[target_cols]
 
-        saveSubmission(OUTPUT_DIR, df_train, df_test, target_cols, df_y_pred, df_oof, valid_score, model_name)
+        saveSubmission(OUTPUT_DIR, df_train, df_test, target_cols, df_y_pred, df_oof, valid_score, model_name, setting_params)
 
 
 def argParams():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--mode', default="lgb", choices=['lgb','nn','graph', 'ave', 'stack'] )
-    parser.add_argument('-t', '--type', default="classification", choices=['classification','regression'] )
+    parser.add_argument('-m', '--mode', default="nn", choices=['lgb','nn','graph', 'ave', 'stack'] )
+    parser.add_argument('-t', '--type', default="regression", choices=['classification','regression'] )
     parser.add_argument('-stack_dir', '--stacking_dir_name', type=str, )
-    parser.add_argument('-ep', '--epochs', type=int, default=50)
-    parser.add_argument('-es', '--early_stopping_rounds', type=int, default=100)
-    parser.add_argument('-lr', '--learning_rate', type=float, default=0.1)
-    parser.add_argument('-batch', '--batch_size', type=int, default=64)
+    parser.add_argument('-ep', '--epochs', type=int, default=4)
+    parser.add_argument('-es', '--early_stopping_rounds', type=int, default=10)
+    parser.add_argument('-lr', '--learning_rate', type=float, default=0.005)
+    parser.add_argument('-batch', '--batch_size', type=int, default=128)
+    parser.add_argument('-num_workers', '--num_workers', type=int, default=2)
     parser.add_argument('-v', '--verbose', type=int, default=1)
     parser.add_argument('-f', '--fold', type=int, default=5)
     parser.add_argument('-f2', '--fold2', type=int, default=3)
     parser.add_argument('-d', '--debug', action="store_true")
     parser.add_argument('-d2', '--debug2', action="store_true")
     parser.add_argument('-u', '--use_old_file', action="store_true")
+    parser.add_argument('-train_plot', '--train_plot', action="store_true")
+
+    parser.add_argument('-no_wb', '--no_wandb', action="store_true")
 
     parser.add_argument('-model_dir', '--model_dir_name', type=str)
     parser.add_argument('-pred', '--pred_only', action="store_true")
     parser.add_argument('-pred2', '--pred2_only', action="store_true")
     parser.add_argument('-mid_save', '--mid_save', action="store_true")
     parser.add_argument('-permu', '--permutation_feature_flag', action="store_true")
-    
+
 
     args=parser.parse_args()
 
@@ -2017,6 +2144,5 @@ if __name__ == '__main__':
     setting_params=argParams()
     
     main(setting_params = setting_params)
-
 
 

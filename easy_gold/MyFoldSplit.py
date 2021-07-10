@@ -32,7 +32,8 @@ class DummyKfold():
 
         #     yield train_index, test_index
             yield [0], [0]
-            
+
+
 
 
 class SeasonKFold():
@@ -239,8 +240,131 @@ class TimeStampNewUserSplit(GroupKFold):
    
             
         
-        
+class myStratifiedKFold(StratifiedKFold):
     
+    def __init__(self, stratified_col, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.stratified_col = stratified_col
+        
+    def split(self, _df_X, _se_y, dummy_group, *args, **kwargs):
+        
+        df = _df_X[[self.stratified_col]]
+        
+        index_name = _df_X.index.name
+        df = df.reset_index() 
+        
+        print(_df_X.index)
+        print(index_name)
+        
+        fold_idx=1
+        for train_id_index, test_id_index in super().split(_df_X, _df_X[self.stratified_col]):
+            
+            print(f"fold train :{train_id_index}")
+            print(f"{_df_X.iloc[train_id_index][self.stratified_col].value_counts()}")
+            
+            print(f"fold valid :{test_id_index}")
+            print(f"{_df_X.iloc[test_id_index][self.stratified_col].value_counts()}")
+            
+            
+            yield train_id_index, test_id_index
+
+
+class siteStratifiedPathGroupKFold():
+
+    def __init__(self, df_test, group_id_col, stratified_target_id, n_splits):
+
+        self.group_id_col = group_id_col
+        self.stratified_target_id = stratified_target_id
+        self.n_splits = n_splits
+
+        self.df_test_info = df_test.groupby(self.stratified_target_id)[self.group_id_col].agg(["count", "nunique"])
+
+
+    def split(self, _df_X, _se_y, _group, *args, **kwargs):
+
+        df_train = _df_X[[self.group_id_col, self.stratified_target_id]]
+        df_train = df_train.reset_index()
+        df_train["fold"]=self.n_splits
+
+        for site_id, row in self.df_test_info.iterrows():
+            count = row["count"]
+            nunique = row["nunique"]
+
+            path_list = df_train.loc[df_train[self.stratified_target_id]==site_id, self.group_id_col].unique()
+            random.shuffle(path_list)
+
+            path_set_list= [t for t in zip(*[iter(path_list)]*nunique)]
+            diff_dict = {}
+            for i, path_set in enumerate(path_set_list):
+                #print(f"{i} : {path_set}")
+                train_path_count = df_train.loc[df_train[self.group_id_col].isin(path_set), self.group_id_col].count()
+                diff_count = abs(train_path_count-count)
+                diff_dict[i] = diff_count
+            
+            sort_i_list = sorted(diff_dict.items(), key=lambda x:x[1])
+            #print(sort_i_list)
+
+            for k in range(self.n_splits):
+                sort_i = sort_i_list[k][0]
+
+            
+                path_set =path_set_list[sort_i]
+                df_train.loc[df_train[self.group_id_col].isin(path_set), "fold"] = k
+                ##print(f"{sort_i}, {sort_i_list[k]}")
+                #print(f"df_train fold k : {df_train.loc[df_train['fold']==k].shape}")
+            #pdb.set_trace()
+
+        for k in range(self.n_splits):
+
+            #df_fold_t = df_train.loc[df_train["fold"]==k, ["site_id", "path"]]
+
+            #print(f"fold {k}:")
+            #print(df_fold_t.groupby("site_id")["path"].agg(["count", "nunique"]))
+
+
+            yield list(df_train.loc[df_train["fold"]!=k].index), list(df_train.loc[df_train["fold"]==k].index)
+
+
+            
+
+    
+class myStratifiedKFoldWithGroupID(StratifiedKFold):
+
+    def __init__(self, group_id_col, stratified_target_id, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.group_id_col = group_id_col
+        self.stratified_target_id = stratified_target_id
+
+    def split(self, _df_X, _se_y, _group, *args, **kwargs):
+
+        #_df_X["group_target"] = _se_y
+        df = _df_X[[self.group_id_col, self.stratified_target_id]]
+        #df["group_target"] = _se_y
+        df = df.reset_index()
+        gp = df.groupby(self.group_id_col)[self.stratified_target_id].agg(pd.Series.mode)
+        #print(gp)
+        #print(gp.index)
+        #del df
+        #gc.collect()
+
+        fold_idx=1
+        for train_id_index, test_id_index in super().split(gp.index, gp,  _group):
+            #print(f"fold_idx : {fold_idx}")
+            #print(f"train_id_index : {train_id_index}, test_id_index : {test_id_index}")
+            #print(f"train_id : {gp.index[train_id_index]}, test_id : {gp.index[test_id_index]}")
+            train_id_list = list(gp.index[train_id_index])
+            test_id_list = list(gp.index[test_id_index])
+
+            print(f"fold train :{df.loc[df[self.group_id_col].isin(train_id_list), self.stratified_target_id].value_counts()}")
+            print(f"fold valid :{df.loc[df[self.group_id_col].isin(test_id_list), self.stratified_target_id].value_counts()}")
+
+            #print(f"train_seq_id : {df.loc[df[self.group_id_col].isin(train_id_list)].index}, test_id : {df.loc[df[self.group_id_col].isin(test_id_list)].index}")
+            fold_idx+=1
+
+            yield list(df.loc[df[self.group_id_col].isin(train_id_list)].index), list(df.loc[df[self.group_id_col].isin(test_id_list)].index)
+
 
 class StratifiedKFoldWithGroupID(StratifiedKFold):
 
@@ -255,8 +379,10 @@ class StratifiedKFoldWithGroupID(StratifiedKFold):
         df = _df_X[[self.group_id_col]]
         df["group_target"] = _se_y
         df = df.reset_index()
-        gp = df.groupby(self.group_id_col)["group_target"].agg(pd.Series.mode)
+        gp = df.groupby(self.group_id_col)["group_target"].apply(lambda x:x.mode()[0])
         #print(gp)
+        
+        #pdb.set_trace()
         #print(gp.index)
         #del df
         #gc.collect()

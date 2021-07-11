@@ -344,8 +344,8 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         ppath_to_img = INPUT_DIR/f"photos/{image_name}"
         img = Image.open(ppath_to_img)
         img = self.transformer(img)
-   
-        return [img], self.df_train_y.iloc[idx]
+        
+        return [img], self.df_train_y.iloc[idx].values[0]
     
 class SequenceTransformer(object):
     def __init__(self):
@@ -762,7 +762,7 @@ class PytorchLightningModelBase(pl.LightningModule):
         out = self._forward(batch)
 
         #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
-        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[-1][..., -1].view(-1, 1))
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=None)
         train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
         
 
@@ -783,7 +783,7 @@ class PytorchLightningModelBase(pl.LightningModule):
 
         out = self._forward(batch)
 
-        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[-1][..., -1].view(-1, 1))
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=None)
         val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
         
 
@@ -867,8 +867,11 @@ class myResNet(PytorchLightningModelBase):
         
     def _forward(self, batch):
         
-        img =  batch[0]
+     
+        img =  batch[0][0]
+        #print(f"img : {img.shape}")
         out = self.model(img)
+        
         
         
         return out
@@ -879,13 +882,13 @@ class myResNet(PytorchLightningModelBase):
 
     def criterion(self, y_true, y_pred, weight=None):
 
-        #print(f"y_true : {y_true.shape}")
-        #print(f"y_pred : {y_pred.shape}")
+        # print(f"y_true : {y_true.shape}")
+        # print(f"y_pred : {y_pred.shape}")
         #print(f"weight : {weight.shape}")
         #pdb.set_trace()
 
         if weight is None:
-            return nn.MSELoss()(y_pred.float(), y_true.float())
+            return nn.MSELoss()(y_pred.squeeze().float(), y_true.float())
         else:
             return weighted_mse_loss(input=y_pred[:, :2].float(), target=y_true[:, :2].float(), weight=weight)
 

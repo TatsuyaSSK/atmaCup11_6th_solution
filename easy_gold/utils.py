@@ -18,6 +18,7 @@ from sklearn.metrics import confusion_matrix
 from functools import partial
 import scipy as sp
 import matplotlib.pyplot as plt
+from matplotlib_venn import venn2
 import lightgbm as lgb
 from sklearn import preprocessing
 import seaborn as sns
@@ -92,7 +93,7 @@ else:
     import warnings
     warnings.simplefilter('ignore')
 
-PROJECT_NAME = "atma11"
+PROJECT_NAME = "indoor-location-navigation"
 INPUT_DIR = Path(f"../input/{PROJECT_NAME}" if ON_KAGGLE else "../data/raw")
 PROC_DIR = Path("." if ON_KAGGLE else "../data/proc")
 LOG_DIR = ("." if ON_KAGGLE else "../data/log")
@@ -335,22 +336,22 @@ def dimensionReductionPCA(df, _n_components, prefix="PCA_"):
     plt.close()
 
 
-    df_comp = pd.DataFrame(pca.components_, columns=df.columns, index=[f"{prefix}{x + 1}" for x in range(_n_components)])
-    print(df_comp)
+    # df_comp = pd.DataFrame(pca.components_, columns=df.columns, index=[f"{prefix}{x + 1}" for x in range(_n_components)])
+    # print(df_comp)
 
-    plt.figure(figsize=(6, 6))
-    for x, y, name in zip(pca.components_[0], pca.components_[1], df.columns):
-        plt.text(x, y, name)
-    plt.scatter(pca.components_[0], pca.components_[1], alpha=0.8)
-    plt.grid()
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
+    # plt.figure(figsize=(6, 6))
+    # for x, y, name in zip(pca.components_[0], pca.components_[1], df.columns):
+    #     plt.text(x, y, name)
+    # plt.scatter(pca.components_[0], pca.components_[1], alpha=0.8)
+    # plt.grid()
+    # plt.xlabel("PC1")
+    # plt.ylabel("PC2")
     
-    path_to_save = os.path.join(str(PATH_TO_GRAPH_DIR), datetime.now().strftime("%Y%m%d%H%M%S") + "_PCA_scatter.png")
-    #print("save: ", path_to_save)
-    plt.savefig(path_to_save)
-    plt.show(block=False)
-    plt.close()
+    # path_to_save = os.path.join(str(PATH_TO_GRAPH_DIR), datetime.now().strftime("%Y%m%d%H%M%S") + "_PCA_scatter.png")
+    # #print("save: ", path_to_save)
+    # plt.savefig(path_to_save)
+    # plt.show(block=False)
+    # plt.close()
 
     return df_reduced
 
@@ -1065,6 +1066,9 @@ def proclabelEncodings(df, not_proc_list=[]):
             if f in not_proc_list:
                 continue
             
+            if not ON_KAGGLE:
+                print(f)
+            
             val_list = list(df[f].dropna().unique())
             val_list.sort()
             #print(df[f].unique())
@@ -1075,8 +1079,7 @@ def proclabelEncodings(df, not_proc_list=[]):
             inverse_dict =  get_swap_dict(replace_map)
             decode_dict[f] = inverse_dict
             
-            if not ON_KAGGLE:
-                print(f)
+            
             #lbl.fit(list(df[f].dropna().unique()))
             #print(list(lbl.classes_))
             #df[f] = lbl.transform(list(df[f].values))
@@ -1493,7 +1496,64 @@ def comparisonSub():
     plt.savefig(PATH_TO_GRAPH_DIR/"seaborntest.png") 
 
 
+def rolling_window(a, w):
+    s0, s1 = a.strides
+    m, n = a.shape
+    return np.lib.stride_tricks.as_strided(
+        a, 
+        shape=(m-w+1, w, n), 
+        strides=(s0, s0, s1)
+    )
 
+
+def make_time_series(x, windows_size, pad_num):
+  x = np.pad(x, [[ windows_size-1, 0], [0, 0]], constant_values=pad_num)
+  x = rolling_window(x, windows_size)
+  return x
+
+
+def calcBatchMeanEvalScoreDictFromEvalScoreDictList(eval_score_dict_list, not_proc_cols=[]):
+
+
+    batch_mean_eval_score_dict={}
+    for eval_score_dict in eval_score_dict_list:
+
+        for name, score in eval_score_dict.items():
+            if name in not_proc_cols:
+                continue
+
+            if name in batch_mean_eval_score_dict.keys():
+                batch_mean_eval_score_dict[name].append(eval_score_dict[name])
+            else:
+                batch_mean_eval_score_dict[name] = [eval_score_dict[name]]
+    
+    for name in batch_mean_eval_score_dict.keys():
+        if name in not_proc_cols:
+            continue
+        batch_mean_eval_score_dict[name] = np.array(batch_mean_eval_score_dict[name]).mean()
+    
+    return batch_mean_eval_score_dict
+
+
+
+def calcEvalScoreDict(y_true, y_pred, eval_metric_func_dict):
+    #print("y_true")
+    #print(np.unique(y_true, return_counts=True))
+    #print("y_pred")
+    #print(np.unique(y_pred, return_counts=True))
+
+    eval_score_dict={}
+    for name, f in eval_metric_func_dict.items():
+        score  = f(y_pred=y_pred, y_true=y_true)
+        eval_score_dict[name] = score
+    
+    return eval_score_dict
+
+def TestReduceALL():
+
+    x = np.array([[[0, 0, 0], [1, 0, 3], [2, 2, 2]], [[0, 0, 0], [0, 0, 0], [1, 0, 3]]])
+
+    pdb.set_trace()
     
 if __name__ == '__main__':
-    TEST__calc_smoothing()
+    TestReduceALL()

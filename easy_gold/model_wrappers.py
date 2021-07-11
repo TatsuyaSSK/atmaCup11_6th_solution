@@ -560,7 +560,7 @@ class PytrochLightningBase():
 
     def predict(self, X_test, oof_flag=False):
 
-        batch_size=self.edit_params["batch_size"] if oof_flag else 1 #
+        batch_size=self.edit_params["batch_size"] #if oof_flag else 1 #
         dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
         data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=False)
         dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=batch_size, shuffle=False, collate_fn=self.edit_params["collate_fn"],num_workers=self.edit_params["num_workers"])

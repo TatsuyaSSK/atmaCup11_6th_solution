@@ -1428,8 +1428,17 @@ def postproc(df_y_pred, df_oof, df_train, df_test, setting_params):
         pass
     else:
         
+        def f(x):
+
+            if x < 0:
+                return 0
+            elif x > 3:
+                return 3
+            
+            return x
         
-        pass
+        df_y_pred["target"] = df_y_pred["target"].map(lambda x: f(x))
+        df_oof["target"] = df_oof["target"].map(lambda x: f(x))
 
 
     return df_y_pred, df_oof
@@ -1917,42 +1926,6 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     return df_y_pred, df_oof, valid_score, model_name
 
 
-def saveSimple(path_to_output, df_final_pred):
-
-    sample_submission = pd.read_csv(INPUT_DIR/'submission99.csv')
-    sample_submission['building'] = [x.split('_')[0] for x in sample_submission['site_path_timestamp']]
-    sample_submission['path_id'] = [x.split('_')[1] for x in sample_submission['site_path_timestamp']]
-    sample_submission['timestamp'] = [x.split('_')[2] for x in sample_submission['site_path_timestamp']]
-
-    df_pred = df_final_pred
-    for i, row in sample_submission.iterrows():
-        path_id = row["path_id"]
-        sub_ts = int(row["timestamp"])
-        df_path = df_pred.loc[df_pred["path_id"]==path_id] #.sort_values("t1_wifi")
-        np_ts = df_path["t1_wifi"].values
-        insert_id = np.searchsorted(np_ts, sub_ts)
-        if insert_id >= len(np_ts):
-            #print(f"sub_ts : {sub_ts}, insert_id: {insert_id}, np_ts:{np_ts}")
-            insert_id = len(np_ts) - 1
-        #print(f"sub_ts : {sub_ts}, insert_id: {insert_id}, np_ts:{np_ts}")
-        #print(df_path.iloc[insert_id]["x"])
-        sample_submission.loc[i,"x"] = df_path.iloc[insert_id]["x"]
-        sample_submission.loc[i,"y"] = df_path.iloc[insert_id]["y"]
-
-    sample_submission[["site_path_timestamp", "x", "y", "floor"]].to_csv(path_to_output.parent/f"{path_to_output.stem}_simple.csv", index=False)
-
-
-def savefloors(path_to_output, df_final_pred):
-    sample_submission = pd.read_csv(INPUT_DIR/'submission99.csv')
-    sample_submission['path'] = [x.split('_')[1] for x in sample_submission['site_path_timestamp']]
-
-    gp = sample_submission.groupby("path")["floor"].agg(lambda x: x.mode())
-
-    df_final_pred = df_final_pred.set_index("path")
-    df_final_pred["floor_99"] = gp
-
-    df_final_pred = df_final_pred.reset_index()
-    df_final_pred.to_csv(path_to_output.parent/f"{path_to_output.stem}_simple.csv", index=False)
 
 
 
@@ -1962,29 +1935,20 @@ def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred,
     prefix = "{}_{}--{:.6f}--".format(now, model_name,valid_score)
 
 
-
-    #df_save_oof = pd.DataFrame(oof, index=df_train.index, columns=[target_col]).reset_index()
     df_save_oof = df_oof.reset_index()
-    #df_save_oof = df_save_oof.rename(columns = {'index':'id_seqpos'})
-
+    
     path_to_output_oof = path_to_output_dir/"oof.csv" if ON_KAGGLE else path_to_output_dir / "{}_oof.csv".format(prefix)
     df_save_oof.to_csv(path_to_output_oof, index=False)
 
 
-
-    #df_final_pred = pd.DataFrame(y_pred, index=df_test.index, columns=[target_col]).reset_index()
-
-    df_final_pred = df_y_pred.reset_index()
-    #df_final_pred = df_final_pred.rename(columns = {'index':'id_seqpos'})
-
+    #only in atma11
+    #df_final_pred = df_y_pred.reset_index()
+    df_final_pred = df_y_pred
 
     path_to_output = path_to_output_dir/"submission.csv" if ON_KAGGLE else path_to_output_dir / "{}_submission.csv".format(prefix)
     df_final_pred.to_csv(path_to_output, index=False)
 
-    if setting_params["mode"]=="lgb":
-        savefloors(path_to_output, df_final_pred)
-    else:
-        saveSimple(path_to_output, df_final_pred)
+   
 
     logger.debug("df_save_oof:{}".format(df_save_oof.shape))
     logger.debug("df_submit:{}".format(df_final_pred.shape))

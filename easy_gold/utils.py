@@ -93,7 +93,7 @@ else:
     import warnings
     warnings.simplefilter('ignore')
 
-PROJECT_NAME = "indoor-location-navigation"
+PROJECT_NAME = "atma11"
 INPUT_DIR = Path(f"../input/{PROJECT_NAME}" if ON_KAGGLE else "../data/raw")
 PROC_DIR = Path("." if ON_KAGGLE else "../data/proc")
 LOG_DIR = ("." if ON_KAGGLE else "../data/log")
@@ -1053,6 +1053,17 @@ def pickle_load(path):
     with open(path, mode='rb') as f:
         data = pickle.load(f)
     return data
+
+def procLabelEncToSeries(se):
+
+    val_list = list(se.dropna().unique())
+    val_list.sort()
+    #print(df[f].unique())
+    
+    replace_map = dict(zip(val_list, np.arange(len(val_list))))
+    se = se.map(replace_map)
+
+    return se
     
 def proclabelEncodings(df, not_proc_list=[]):
     #lbl = preprocessing.LabelEncoder()

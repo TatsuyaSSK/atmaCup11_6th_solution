@@ -344,6 +344,7 @@ class myStratifiedKFoldWithGroupID(StratifiedKFold):
         #df["group_target"] = _se_y
         df = df.reset_index()
         gp = df.groupby(self.group_id_col)[self.stratified_target_id].agg(pd.Series.mode)
+        
         #print(gp)
         #print(gp.index)
         #del df
@@ -378,6 +379,8 @@ class StratifiedKFoldWithGroupID(StratifiedKFold):
         #_df_X["group_target"] = _se_y
         df = _df_X[[self.group_id_col]]
         df["group_target"] = _se_y
+
+        df["group_target"]  = procLabelEncToSeries(df["group_target"])
         df = df.reset_index()
         gp = df.groupby(self.group_id_col)["group_target"].apply(lambda x:x.mode()[0])
         #print(gp)

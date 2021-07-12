@@ -10,7 +10,7 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from abc import ABCMeta, abstractmethod
 import pytorch_lightning as pl
 from torchvision import transforms as T
-from torchvision.models import resnet34
+from torchvision.models import resnet34, resnet18
 from PIL import Image
 
 
@@ -313,7 +313,8 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         IMG_STD = [0.229, 0.224, 0.225]
 
         
-        size = (224, 224)
+        #size = (224, 224)
+        size = (300, 300)
         additional_items = (
             [T.Resize(size)]
             if not train_flag
@@ -862,7 +863,7 @@ class myResNet(PytorchLightningModelBase):
     def __init__(self) -> None:
         super().__init__()
         
-        self.model = resnet34(pretrained=False)
+        self.model = resnet18(pretrained=False)
         self.model.fc = nn.Linear(in_features=512, out_features=1, bias=True)
         
     def _forward(self, batch):

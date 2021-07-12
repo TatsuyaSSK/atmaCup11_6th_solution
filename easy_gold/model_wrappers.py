@@ -498,11 +498,13 @@ class PytrochLightningBase():
             dataloader_val = torch.utils.data.DataLoader(data_set_val, batch_size=batch_size, shuffle=False, collate_fn=params["collate_fn"],num_workers=params["num_workers"])
 
 
+
         wandb_logger=None
         if (not ON_KAGGLE) and (params["no_wandb"]==False):
             #wandb.init(config=params)
             wandb_run = wandb.init(project=PROJECT_NAME, group=params["wb_group_name"], reinit=True, name=params["wb_run_name"] )
             wandb_logger = WandbLogger(experment=wandb_run)
+           # wandb_logger = WandbLogger(project=PROJECT_NAME, group=params["wb_group_name"], reinit=True, name=params["wb_run_name"] )
             wandb_logger.log_hyperparams(params)
             #
             #wandb.config.update(params,  allow_val_change=True)

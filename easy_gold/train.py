@@ -1411,7 +1411,7 @@ def preproc(df_train, df_test, target_col, setting_params):
         pass
 
     else:
-        pass
+        df_train["target"] = df_train["target"].astype(float) / 3.0
         
 
         #df_train, df_test = calcWeight(df_train, df_test)
@@ -1427,6 +1427,9 @@ def postproc(df_y_pred, df_oof, df_train, df_test, setting_params):
     elif (setting_params["mode"]=="lgb"):
         pass
     else:
+
+        df_y_pred["target"] = df_y_pred["target"] * 3
+        df_oof["target"] = df_oof["target"]* 3
         
         def f(x):
 
@@ -1568,6 +1571,9 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         def my_eval(y_pred, y_true):
 
             
+            y_pred = y_pred*3.0
+            y_pred = np.where(y_pred < 0, 0, y_pred)
+            y_pred = np.where(y_pred > 3, 3, y_pred)
             
             return np.sqrt(mean_squared_error(y_true, y_pred))
 

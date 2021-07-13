@@ -932,11 +932,18 @@ def main(params):
     
     
     target_val="target"
-    new_cols=["image_name"] #df_train.columns
+    new_cols=["year_bin50"] #df_train.columns
     exclude = []
     for col in exclude:
         new_col.remove(col)
-    
+
+    for c in new_cols+[target_val]:
+        df_train[c] = df_train[c].astype("str")
+
+        if c in df_test.columns:
+            df_test[c] = df_test[c].astype("str")
+
+    pdb.set_trace()
     showDetails(df_train, df_test, new_cols=new_cols, target_val=target_val, corr_flag=True)
 
 

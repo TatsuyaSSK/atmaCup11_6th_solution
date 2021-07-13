@@ -1389,11 +1389,12 @@ def interpolationSpline(df_y_pred, df_oof, true_y):
 
 def calcWeight(df_train, df_test):
 
-    test_gp = df_test.groupby("site_id")["path"].agg({"count", "nunique"})
-    #test_gp["weight_nunique"] = test_gp["nunique"].sum()/test_gp["nunique"]
-    test_gp["weight_nunique"] = test_gp["count"].sum()/test_gp["count"]
+    gp = df_train.groupby("target")["art_series_id"].agg({"count", "nunique"})
+    #pdb.set_trace()
+    gp["weight_nunique"] = gp["count"].sum()/gp["count"]
 
-    df_train["floor"] = df_train["site_id"].map(test_gp["weight_nunique"])
+    df_train["loss_weight"] = df_train["target"].map(gp["weight_nunique"])
+    df_test["loss_weight"] = 1.0
 
 
 
@@ -1402,7 +1403,7 @@ def calcWeight(df_train, df_test):
 
 gl_norm_dict = {}
 
-def preproc(df_train, df_test, target_col, setting_params):
+def preproc(df_train, df_test, target_col_list, setting_params):
 
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
         pass
@@ -1411,10 +1412,16 @@ def preproc(df_train, df_test, target_col, setting_params):
         pass
 
     else:
-        df_train["target"] = df_train["target"].astype(float) / 3.0
+        target_col = target_col_list[0]
+
+        if target_col == "target":
+
+            df_train[target_col] = df_train[target_col].astype(float) / 3.0
+        elif target_col == "year_bin50":
+            df_train[target_col] = df_train[target_col].astype(float) / 11.0
         
 
-        #df_train, df_test = calcWeight(df_train, df_test)
+        df_train, df_test = calcWeight(df_train, df_test)
 
     return df_train, df_test
 
@@ -1428,21 +1435,44 @@ def postproc(df_y_pred, df_oof, df_train, df_test, setting_params):
         pass
     else:
 
-        df_y_pred["target"] = df_y_pred["target"] * 3
-        df_oof["target"] = df_oof["target"]* 3
-        
-        def f(x):
-
-            if x < 0:
-                return 0
-            elif x > 3:
-                return 3
+        target_col = setting_params["target"][0]
+        if target_col == "target":
+            df_y_pred["target"] = df_y_pred["target"] * 3
+            df_oof["target"] = df_oof["target"]* 3
             
-            return x
-        
-        df_y_pred["target"] = df_y_pred["target"].map(lambda x: f(x))
-        df_oof["target"] = df_oof["target"].map(lambda x: f(x))
+            def f(x):
 
+                if x < 0:
+                    return 0
+                elif x > 3:
+                    return 3
+                
+                return x
+            
+            df_y_pred["target"] = df_y_pred["target"].map(lambda x: f(x))
+            df_oof["target"] = df_oof["target"].map(lambda x: f(x))
+
+        elif target_col == "year_bin50":
+            df_y_pred[target_col] = df_y_pred[target_col] * 11.0
+            df_oof[target_col] = df_oof[target_col]* 11.0
+
+            def f(x):
+
+                if x <= 3:
+                    return 0
+                elif (x > 3) and (x <= 5):
+                    return 1
+                elif (x > 5) and (x <= 7):
+                    return 2
+                else:
+                    return 3
+                
+                
+            
+            df_y_pred[target_col] = df_y_pred[target_col].map(lambda x: f(x))
+            df_oof[target_col] = df_oof[target_col].map(lambda x: f(x))
+
+            #pdb.set_trace()
 
     return df_y_pred, df_oof
 
@@ -1488,8 +1518,11 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         #folds = myStratifiedKFold(n_splits=n_fold, shuffle=False, random_state=2020, stratified_col="site_id")
         
         #folds = Year2KFold(date_column='point_of_deal', test_years=2, clipping=False, split_type=2, n_splits=n_fold)
-        #folds = myStratifiedKFoldWithGroupID(n_splits=n_fold, shuffle=False, group_id_col="art_series_id", stratified_target_id="target")
-        folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="art_series_id")
+
+        if target_col_list[0]=="year_bin50":
+            folds = myStratifiedKFoldWithGroupID(n_splits=n_fold, shuffle=False, group_id_col="art_series_id", stratified_target_id="target")
+        elif target_col_list[0] == "target":
+            folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="art_series_id")
 
         #folds = KFold(n_fold)
 
@@ -1553,27 +1586,48 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
     elif (setting_params["mode"]=="nn"):
         
-        def comp_metric(xhat, yhat, fhat, x, y, f):
+        # def comp_metric(xhat, yhat, fhat, x, y, f):
 
             
    
-            diff_x = (xhat-x) * gl_norm_dict["x_norm"] 
-            diff_y = (yhat-y) * gl_norm_dict["y_norm"] 
+        #     diff_x = (xhat-x) * gl_norm_dict["x_norm"] 
+        #     diff_y = (yhat-y) * gl_norm_dict["y_norm"] 
 
-            # print(f"norms : {gl_norm_dict['x_norm']}, {gl_norm_dict['y_norm']}")
-            # print(f"diff_x : {x}")
-            # print(f"diff_y : {y}")
+        #     # print(f"norms : {gl_norm_dict['x_norm']}, {gl_norm_dict['y_norm']}")
+        #     # print(f"diff_x : {x}")
+        #     # print(f"diff_y : {y}")
 
-            intermediate = np.sqrt(np.power(diff_x, 2) + np.power(diff_y, 2))# + 15 * np.abs(fhat-f)
-            return intermediate.sum()/xhat.shape[0]
+        #     intermediate = np.sqrt(np.power(diff_x, 2) + np.power(diff_y, 2))# + 15 * np.abs(fhat-f)
+        #     return intermediate.sum()/xhat.shape[0]
         
         from sklearn.metrics import mean_squared_error
         def my_eval(y_pred, y_true):
 
+            if setting_params["target"][0] == "target":
             
-            y_pred = y_pred*3.0
-            y_pred = np.where(y_pred < 0, 0, y_pred)
-            y_pred = np.where(y_pred > 3, 3, y_pred)
+                y_pred = y_pred*3.0
+                y_true = y_true*3.0
+                y_pred = np.where(y_pred < 0, 0, y_pred)
+                y_pred = np.where(y_pred > 3, 3, y_pred)
+
+            elif setting_params["target"][0] == "year_bin50":
+
+               
+                
+
+                y_pred = y_pred*11.0
+                y_true = y_true*11.0
+
+                y_pred = np.where(y_pred <= 3, 0, y_pred)
+                y_pred = np.where((y_pred > 3) & (y_pred <= 5), 1, y_pred)
+                y_pred = np.where((y_pred > 5) & (y_pred <= 7), 2, y_pred)
+                y_pred = np.where(y_pred > 7, 3, y_pred)
+
+                y_true = np.where(y_true <= 3, 0, y_true)
+                y_true = np.where((y_true > 3) & (y_true <= 5), 1, y_true)
+                y_true = np.where((y_true > 5) & (y_true <= 7), 2, y_true)
+                y_true = np.where(y_true > 7, 3, y_true)
+
             
             return np.sqrt(mean_squared_error(y_true, y_pred))
 
@@ -1712,7 +1766,10 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         scale_features = time_list
         target_encode_features=[]
 
-        final_use_columns = id_list
+        if setting_params["target"][0] == "target":
+            final_use_columns = id_list + ["loss_weight"]
+        elif setting_params["target"][0] == "year_bin50":
+            final_use_columns = id_list + ["loss_weight"]
 
         # if setting_params["pred_only"]==False:
         #     dropcols = [col for col in df_train.columns if col not in final_use_columns]
@@ -2008,7 +2065,7 @@ def main(setting_params):
     mode=setting_params["mode"]
     setting_params["index"] = "object_id"
     
-    target_cols= ['target']
+    target_cols= ["target"] #year_bin50
    
     setting_params["num_class"] = len(target_cols)
 
@@ -2064,6 +2121,10 @@ def main(setting_params):
             df_y_pred.loc[df_y_pred_each.index, target_cols] = df_y_pred_each[target_cols]
         else:
             df_y_pred = df_y_pred_each#[target_cols]
+
+        if target_cols[0]=="year_bin50":
+            df_oof = df_oof.rename(columns={target_cols[0]:"target"})
+            df_y_pred = df_y_pred.rename(columns={target_cols[0]:"target"})
 
         saveSubmission(OUTPUT_DIR, df_train, df_test, target_cols, df_y_pred, df_oof, valid_score, model_name, setting_params)
 

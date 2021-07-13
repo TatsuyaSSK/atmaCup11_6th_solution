@@ -206,18 +206,12 @@ class Preprocessor:
 
     #     return df
 
-    # def fe__count_max_floor_by_path(self, df):
+    def fe__year_bin50(self, df):
 
-    #     path_gp =  df.groupby("path")["count_max_floor"].apply(lambda x: x.mode())
-    #     path_gp.index = path_gp.index.map(lambda x: x[0])
-    #     path_gp.name = 'count_max_floor_by_path'
-
+        df["year_bin50"] = df["sorting_date"].map(lambda x: (x-1)//50 -28)
         
 
-    #     df = df.join(path_gp, on="path")
-        
-
-    #     return df
+        return df
     
     def loadFs(self, df, f_name_list):
         

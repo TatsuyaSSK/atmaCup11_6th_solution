@@ -319,16 +319,17 @@ class MyDatasetResNet(torch.utils.data.Dataset):
             [T.Resize(size)]
             if not train_flag
             else [
-                T.RandomGrayscale(p=0.2),
+                #T.RandomGrayscale(p=0.2),
                 T.RandomVerticalFlip(),
                 T.RandomHorizontalFlip(),
-                T.ColorJitter(
-                    brightness=0.3,
-                    contrast=0.5,
-                    saturation=[0.8, 1.3],
-                    hue=[-0.05, 0.05],
-                ),
-                T.RandomResizedCrop(size),
+                # T.ColorJitter(
+                #     brightness=0.3,
+                #     contrast=0.5,
+                #     saturation=[0.8, 1.3],
+                #     hue=[-0.05, 0.05],
+                # ),
+                #T.RandomResizedCrop(size),
+                T.Resize(size),
             ]
         )
 
@@ -345,8 +346,10 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         ppath_to_img = INPUT_DIR/f"photos/{image_name}"
         img = Image.open(ppath_to_img)
         img = self.transformer(img)
+
+        w = self.df_train_X.iloc[idx]['loss_weight']
         
-        return [img], self.df_train_y.iloc[idx].values[0]
+        return [img, w], self.df_train_y.iloc[idx].values[0]
     
 class SequenceTransformer(object):
     def __init__(self):
@@ -763,7 +766,7 @@ class PytorchLightningModelBase(pl.LightningModule):
         out = self._forward(batch)
 
         #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
-        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=None)
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
         train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
         
 
@@ -784,7 +787,7 @@ class PytorchLightningModelBase(pl.LightningModule):
 
         out = self._forward(batch)
 
-        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=None)
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
         val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
         
 
@@ -872,7 +875,8 @@ class myResNet(PytorchLightningModelBase):
         img =  batch[0][0]
         #print(f"img : {img.shape}")
         out = self.model(img)
-        
+        #out = torch.sigmoid(out)
+        #out = torch.clamp(out, 0, 1)
         
         
         return out
@@ -885,13 +889,13 @@ class myResNet(PytorchLightningModelBase):
 
         # print(f"y_true : {y_true.shape}")
         # print(f"y_pred : {y_pred.shape}")
-        #print(f"weight : {weight.shape}")
-        #pdb.set_trace()
+        # print(f"weight : {weight.shape}")
+        # pdb.set_trace()
 
         if weight is None:
             return nn.MSELoss()(y_pred.squeeze().float(), y_true.float())
         else:
-            return weighted_mse_loss(input=y_pred[:, :2].float(), target=y_true[:, :2].float(), weight=weight)
+            return weighted_mse_loss(input=y_pred.squeeze().float(), target=y_true.float(), weight=weight.float())
 
 
 class LastLSTM(PytorchLightningModelBase):

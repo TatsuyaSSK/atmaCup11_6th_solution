@@ -343,7 +343,7 @@ class myStratifiedKFoldWithGroupID(StratifiedKFold):
         df = _df_X[[self.group_id_col, self.stratified_target_id]]
         #df["group_target"] = _se_y
         df = df.reset_index()
-        gp = df.groupby(self.group_id_col)[self.stratified_target_id].agg(pd.Series.mode)
+        gp = df.groupby(self.group_id_col)[self.stratified_target_id].apply(lambda x:x.mode()[0])
         
         #print(gp)
         #print(gp.index)

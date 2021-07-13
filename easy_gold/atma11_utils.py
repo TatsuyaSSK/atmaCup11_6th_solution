@@ -50,8 +50,8 @@ def copyImg():
 def sub_round():
 
     df_train = pd.read_pickle(PROC_DIR / f'df_proc_train.pkl')
-    df_oof = pd.read_csv(OUTPUT_DIR/"20210712_132557_ResNet_Wrapper--0.808721--_oof.csv", index_col="object_id") 
-    df_sub = pd.read_csv(OUTPUT_DIR/"20210712_132557_ResNet_Wrapper--0.808721--_submission.csv")
+    df_oof = pd.read_csv(OUTPUT_DIR/"20210713_030317_ResNet_Wrapper--0.800492--_oof.csv", index_col="object_id") 
+    df_sub = pd.read_csv(OUTPUT_DIR/"20210713_030317_ResNet_Wrapper--0.800492--_submission.csv")
     print(df_sub.describe())
 
     #pdb.set_trace()
@@ -78,8 +78,6 @@ def sub_round():
                 X_p[i] = 1
             elif pred >= _th_list[1] and pred < _th_list[2]:
                 X_p[i] = 2
-            #elif pred >= coef[2] and pred < coef[3]:
-            #    X_p[i] = 3
             else:
                 X_p[i] = 3
 
@@ -97,7 +95,7 @@ def sub_round():
     print(th_list)
 
     df_sub["target"] = df_sub["target"].map(lambda x: 0 if x < th_list[0] else (1 if x < th_list[1] else (2 if x < th_list[2] else 3)))
-    df_sub.to_csv(OUTPUT_DIR/"20210712_132557_ResNet_Wrapper--0.808721--_submission_round.csv", index=False)
+    df_sub.to_csv(OUTPUT_DIR/"20210713_030317_ResNet_Wrapper--0.800492--_submission_round.csv", index=False)
     
         
         

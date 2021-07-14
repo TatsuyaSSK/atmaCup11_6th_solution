@@ -45,7 +45,13 @@ def copyImg():
         new_pp = pp_dir / row["image_name"]
         shutil.copy(ppath_to_image, new_pp)
         
-        
+def drop_art_series(df_train):
+
+    gp = df_train.groupby("art_series_id")["target"].nunique()
+    drop_series = gp[gp>1].index
+    df_train = df_train.loc[~df_train["art_series_id"].isin(drop_series)]   
+
+    return df_train
         
 def sub_round():
 

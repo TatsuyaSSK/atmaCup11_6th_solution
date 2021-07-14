@@ -8,10 +8,79 @@ from sklearn.model_selection import TimeSeriesSplit, StratifiedKFold, GroupKFold
 from pandas.plotting import register_matplotlib_converters
 register_matplotlib_converters()
 from dateutil.relativedelta import relativedelta
+from collections import Counter, defaultdict
 from utils import *
 
+def stratified_group_k_fold(X, y, groups, k, seed=None):
+    labels_num = np.max(y) + 1
+    y_counts_per_group = defaultdict(lambda: np.zeros(labels_num))
+    y_distr = Counter()
+    for label, g in zip(y, groups):
+        y_counts_per_group[g][label] += 1
+        y_distr[label] += 1
+
+    y_counts_per_fold = defaultdict(lambda: np.zeros(labels_num))
+    groups_per_fold = defaultdict(set)
+
+    def eval_y_counts_per_fold(y_counts, fold):
+        y_counts_per_fold[fold] += y_counts
+        std_per_label = []
+        for label in range(labels_num):
+            label_std = np.std([y_counts_per_fold[i][label] / y_distr[label] for i in range(k)])
+            std_per_label.append(label_std)
+        y_counts_per_fold[fold] -= y_counts
+        return np.mean(std_per_label)
+    
+    groups_and_y_counts = list(y_counts_per_group.items())
+    random.Random(seed).shuffle(groups_and_y_counts)
+
+    for g, y_counts in sorted(groups_and_y_counts, key=lambda x: -np.std(x[1])):
+        best_fold = None
+        min_eval = None
+        for i in range(k):
+            fold_eval = eval_y_counts_per_fold(y_counts, i)
+            if min_eval is None or fold_eval < min_eval:
+                min_eval = fold_eval
+                best_fold = i
+        y_counts_per_fold[best_fold] += y_counts
+        groups_per_fold[best_fold].add(g)
+
+    all_groups = set(groups)
+    for i in range(k):
+        train_groups = all_groups - groups_per_fold[i]
+        test_groups = groups_per_fold[i]
+
+        train_indices = [i for i, g in enumerate(groups) if g in train_groups]
+        test_indices = [i for i, g in enumerate(groups) if g in test_groups]
+
+        yield train_indices, test_indices
+
+class StratifiedKFoldWithGroupID():
+
+    def __init__(self, group_id_col, n_splits, random_state=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.group_id_col = group_id_col
+        self.n_splits = n_splits
+        self.random_state = random_state
+
+    def split(self, _df_X, _se_y, _group, *args, **kwargs):
+
+        df = _df_X[[self.group_id_col]]
+        df["group_target"] = _se_y
+
+        df["group_target"]  = procLabelEncToSeries(df["group_target"])
+        df = df.reset_index()
+
+        for train_idx, test_idx in stratified_group_k_fold(X=df, y=df["group_target"].values, groups=df[self.group_id_col].values, k=self.n_splits, seed=self.random_state):
+            
+            print(f"fold train :{df.iloc[train_idx]['group_target'].value_counts()}")
+            print(f"fold valid :{df.iloc[test_idx]['group_target'].value_counts()}")
+
+            yield train_idx, test_idx
 
 
+        
 
 class DummyKfold():
     def __init__(self, n_splits, random_state):
@@ -367,44 +436,46 @@ class myStratifiedKFoldWithGroupID(StratifiedKFold):
             yield list(df.loc[df[self.group_id_col].isin(train_id_list)].index), list(df.loc[df[self.group_id_col].isin(test_id_list)].index)
 
 
-class StratifiedKFoldWithGroupID(StratifiedKFold):
 
-    def __init__(self, group_id_col, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
-        self.group_id_col = group_id_col
+# class StratifiedKFoldWithGroupID(StratifiedKFold):
 
-    def split(self, _df_X, _se_y, _group, *args, **kwargs):
+#     def __init__(self, group_id_col, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
 
-        #_df_X["group_target"] = _se_y
-        df = _df_X[[self.group_id_col]]
-        df["group_target"] = _se_y
+#         self.group_id_col = group_id_col
 
-        df["group_target"]  = procLabelEncToSeries(df["group_target"])
-        df = df.reset_index()
-        gp = df.groupby(self.group_id_col)["group_target"].apply(lambda x:x.mode()[0])
-        #print(gp)
+#     def split(self, _df_X, _se_y, _group, *args, **kwargs):
+
+#         #_df_X["group_target"] = _se_y
+#         df = _df_X[[self.group_id_col]]
+#         df["group_target"] = _se_y
+
+#         df["group_target"]  = procLabelEncToSeries(df["group_target"])
+#         df = df.reset_index()
+#         gp = df.groupby(self.group_id_col)["group_target"].apply(lambda x:x.mode()[0])
+#         #print(gp)
         
-        #pdb.set_trace()
-        #print(gp.index)
-        #del df
-        #gc.collect()
+#         #pdb.set_trace()
+#         #print(gp.index)
+#         #del df
+#         #gc.collect()
 
-        fold_idx=1
-        for train_id_index, test_id_index in super().split(gp.index, gp,  _group):
-            #print(f"fold_idx : {fold_idx}")
-            #print(f"train_id_index : {train_id_index}, test_id_index : {test_id_index}")
-            #print(f"train_id : {gp.index[train_id_index]}, test_id : {gp.index[test_id_index]}")
-            train_id_list = list(gp.index[train_id_index])
-            test_id_list = list(gp.index[test_id_index])
+#         fold_idx=1
+#         for train_id_index, test_id_index in super().split(gp.index, gp,  _group):
+#             #print(f"fold_idx : {fold_idx}")
+#             #print(f"train_id_index : {train_id_index}, test_id_index : {test_id_index}")
+#             #print(f"train_id : {gp.index[train_id_index]}, test_id : {gp.index[test_id_index]}")
+#             train_id_list = list(gp.index[train_id_index])
+#             test_id_list = list(gp.index[test_id_index])
 
-            print(f"fold train :{df.loc[df[self.group_id_col].isin(train_id_list), 'group_target'].value_counts()}")
-            print(f"fold valid :{df.loc[df[self.group_id_col].isin(test_id_list), 'group_target'].value_counts()}")
+#             print(f"fold train :{df.loc[df[self.group_id_col].isin(train_id_list), 'group_target'].value_counts()}")
+#             print(f"fold valid :{df.loc[df[self.group_id_col].isin(test_id_list), 'group_target'].value_counts()}")
 
-            #print(f"train_seq_id : {df.loc[df[self.group_id_col].isin(train_id_list)].index}, test_id : {df.loc[df[self.group_id_col].isin(test_id_list)].index}")
-            fold_idx+=1
+#             #print(f"train_seq_id : {df.loc[df[self.group_id_col].isin(train_id_list)].index}, test_id : {df.loc[df[self.group_id_col].isin(test_id_list)].index}")
+#             fold_idx+=1
 
-            yield list(df.loc[df[self.group_id_col].isin(train_id_list)].index), list(df.loc[df[self.group_id_col].isin(test_id_list)].index)
+#             yield list(df.loc[df[self.group_id_col].isin(train_id_list)].index), list(df.loc[df[self.group_id_col].isin(test_id_list)].index)
 
         
 

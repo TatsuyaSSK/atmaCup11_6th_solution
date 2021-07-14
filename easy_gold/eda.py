@@ -924,18 +924,33 @@ def loadProc(decode_flag=False):
 
     return df_train, df_test
 
+def eda_art_series(df_train):
+
+    gp = df_train.groupby("art_series_id")["target"].nunique()
+    drop_series = gp[gp>1].index
+    df_train = df_train.loc[~df_train["art_series_id"].isin(drop_series)]
+    pdb.set_trace()
+
+
+
+
 
     
 def main(params):
 
     df_train, df_test = loadProc(decode_flag=False)
+    #eda_art_series(df_train)
+    #sys.exit()
     
     
     target_val="target"
-    new_cols=["year_bin50"] #df_train.columns
+
+    new_cols = getColumnsFromParts(["techniques"], df_train.columns)
+    
+    #new_cols=["year_bin50"] #df_train.columns
     exclude = []
     for col in exclude:
-        new_col.remove(col)
+        new_cols.remove(col)
 
     for c in new_cols+[target_val]:
         df_train[c] = df_train[c].astype("str")
@@ -943,8 +958,9 @@ def main(params):
         if c in df_test.columns:
             df_test[c] = df_test[c].astype("str")
 
-    pdb.set_trace()
+    
     showDetails(df_train, df_test, new_cols=new_cols, target_val=target_val, corr_flag=True)
+    #pdb.set_trace()
 
 
 def argParams():

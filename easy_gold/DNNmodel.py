@@ -12,6 +12,7 @@ import pytorch_lightning as pl
 from torchvision import transforms as T
 from torchvision.models import resnet34, resnet18
 from PIL import Image
+import timm
 
 
 #from torch_geometric.nn import GCNConv, AGNNConv, ChebConv, NNConv, DeepGCNLayer
@@ -328,7 +329,7 @@ class MyDatasetResNet(torch.utils.data.Dataset):
                 #     saturation=[0.8, 1.3],
                 #     hue=[-0.05, 0.05],
                 # ),
-                #T.RandomResizedCrop(size),
+                T.RandomResizedCrop(size),
                 T.Resize(size),
             ]
         )
@@ -866,8 +867,16 @@ class myResNet(PytorchLightningModelBase):
     def __init__(self) -> None:
         super().__init__()
         
-        self.model = resnet18(pretrained=False)
-        self.model.fc = nn.Linear(in_features=512, out_features=1, bias=True)
+
+        self.model = timm.create_model('efficientnet_b0', pretrained=False)
+        #print(self.model)
+
+        self.model.classifier = nn.Linear(in_features=1280, out_features=1, bias=True)
+        #pdb.set_trace()
+
+
+        #self.model = resnet18(pretrained=False)
+        #self.model.fc = nn.Linear(in_features=512, out_features=1, bias=True)
         
     def _forward(self, batch):
         

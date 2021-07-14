@@ -17,6 +17,7 @@ from sklearn.metrics import roc_auc_score, log_loss
 
 
 from utils import *
+from atma11_utils import * 
 
 #from dt_utils import wrmsse_simple_tf
 #from m5_utils import my_squared_error, loss_wrmsse, torch_wrmsse, wrmsse_simple, test3, custom_asymmetric_train, my_loss_rmse, visualizeCompLV
@@ -1412,6 +1413,9 @@ def preproc(df_train, df_test, target_col_list, setting_params):
         pass
 
     else:
+
+        df_train = drop_art_series(df_train)
+
         target_col = target_col_list[0]
 
         if target_col == "target":

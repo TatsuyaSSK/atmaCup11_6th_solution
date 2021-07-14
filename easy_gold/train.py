@@ -418,9 +418,9 @@ class RegressorModel(object):
                     if X_valid is not None:
 
                         tmp_pred= model.predict(X_valid, oof_flag=True)
-                        if isinstance(tmp_pred, np.ndarray):
-                            tmp_pred = tmp_pred.reshape(-1, n_target)
-                            print(tmp_pred.shape)
+                        # if isinstance(tmp_pred, np.ndarray):
+                        #     tmp_pred = tmp_pred.reshape(-1, n_target)
+                        #     print(tmp_pred.shape)
 
 
                         if len(valid_index) == tmp_pred.shape[0]:
@@ -583,7 +583,7 @@ class RegressorModel(object):
                 slack.notify(text=print_text)
             self.scores[d] = np.mean(scores)
 
-    def predict(self, X_test, proba:bool = False, averaging: str = 'usual', arg_max=False):
+    def predict(self, X_test, proba:bool = False, averaging: str = 'usual', regression_flag=True):
         """
         Make prediction
 
@@ -601,8 +601,8 @@ class RegressorModel(object):
 
         X_test = X_test.loc[:,self.columns]
 
-
-        full_prediction = np.zeros((X_test.shape[0], self.df_oof.shape[1]))
+        num_model = len(self.models)
+        full_prediction = np.zeros((num_model, X_test.shape[0], self.df_oof.shape[1]))
 
         #with timer("preprocesser"):
         if self.preprocesser is not None:
@@ -613,7 +613,7 @@ class RegressorModel(object):
             #logger.debug(X_test)
 
 
-        for i in range(len(self.models)):
+        for i in range(num_model):
             if not ON_KAGGLE:
                 print(f"prediction : model {i}")
 
@@ -637,35 +637,45 @@ class RegressorModel(object):
             #with timer(f"predict {i}"):
             if proba:
                 
-                y_pred = self.models[i].predict_proba(X_t.to_numpy()).reshape(full_prediction.shape[0], -1)
-                if full_prediction.shape[1] != y_pred.shape[1]:
-                    full_prediction = np.zeros((y_pred.shape[0], y_pred.shape[1]))
+                y_pred = self.models[i].predict_proba(X_t.to_numpy()).reshape(full_prediction.shape[1], -1)
+                if full_prediction.shape[2] != y_pred.shape[1]:
+                    full_prediction = np.zeros((num_model, y_pred.shape[0], y_pred.shape[1]))
 
 
             else:
                 if self.deal_numpy:
-                    y_pred = self.models[i].predict(X_t.to_numpy()).reshape(-1, full_prediction.shape[1])
+                    y_pred = self.models[i].predict(X_t.to_numpy()).reshape(-1, full_prediction.shape[2])
                 else:
-                    y_pred = self.models[i].predict(X_t).reshape(-1, full_prediction.shape[1])
+                    y_pred = self.models[i].predict(X_t).reshape(-1, full_prediction.shape[2])
 
 
             # del self.models[i]
             # gc.collect()
 
             # if case transformation changes the number of the rows
-            if full_prediction.shape[0] != len(y_pred):
-                full_prediction = np.zeros((y_pred.shape[0], self.df_oof.shape[1]))
+            if full_prediction.shape[1] != len(y_pred):
+                full_prediction = np.zeros((num_model, y_pred.shape[0], self.df_oof.shape[1]))
+
+
+            
 
             if averaging == 'usual':
-                full_prediction += y_pred
+                #full_prediction += y_pred
+                full_prediction[i] = y_pred
             elif averaging == 'rank':
-                full_prediction += pd.Series(y_pred).rank().values
+                full_prediction[i]  = pd.Series(y_pred).rank().values
 
-        full_prediction = full_prediction / len(self.models)
+        
 
-        if arg_max:
+        if regression_flag:
             #pdb.set_trace()
-            full_prediction = np.argmax(full_prediction, axis=1)
+            full_prediction = full_prediction.mean(axis=0)
+        else:
+            
+
+            from scipy import stats
+            full_prediction = stats.mode(full_prediction)[0][0]
+            #full_prediction = np.argmax(full_prediction, axis=1)
 
         return full_prediction
 
@@ -1189,11 +1199,8 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
         gc.collect()
         cpu_stats("after df_X_train, df_y_train  del")
 
-        if (setting_params["mode"] == "lgb"):
-            y_pred = model.predict(df_test, proba=True, arg_max=True)
-        else:
 
-            y_pred = model.predict(df_test)
+        y_pred = model.predict(df_test, regression_flag=(setting_params["type"]=="regression"))
         df_y_pred = pd.DataFrame(y_pred, index=df_test.index, columns=target_col_list)
         print(f"df_y_pred : {df_y_pred}")
 
@@ -1420,7 +1427,9 @@ def preproc(df_train, df_test, target_col_list, setting_params):
 
         if target_col == "target":
 
-            df_train[target_col] = df_train[target_col].astype(float) / 3.0
+            if setting_params["type"]=="regression":
+                df_train[target_col] = df_train[target_col].astype(float) / 3.0
+            
         elif target_col == "year_bin50":
             df_train[target_col] = df_train[target_col].astype(float) / 11.0
         
@@ -1441,20 +1450,24 @@ def postproc(df_y_pred, df_oof, df_train, df_test, setting_params):
 
         target_col = setting_params["target"][0]
         if target_col == "target":
-            df_y_pred["target"] = df_y_pred["target"] * 3
-            df_oof["target"] = df_oof["target"]* 3
-            
-            def f(x):
 
-                if x < 0:
-                    return 0
-                elif x > 3:
-                    return 3
+            if setting_params["type"]=="regression":
+                df_y_pred["target"] = df_y_pred["target"] * 3
+                df_oof["target"] = df_oof["target"]* 3
                 
-                return x
-            
-            df_y_pred["target"] = df_y_pred["target"].map(lambda x: f(x))
-            df_oof["target"] = df_oof["target"].map(lambda x: f(x))
+                def f(x):
+
+                    if x < 0:
+                        return 0
+                    elif x > 3:
+                        return 3
+                    
+                    return x
+                
+                df_y_pred["target"] = df_y_pred["target"].map(lambda x: f(x))
+                df_oof["target"] = df_oof["target"].map(lambda x: f(x))
+
+           
 
         elif target_col == "year_bin50":
             df_y_pred[target_col] = df_y_pred[target_col] * 11.0
@@ -1607,32 +1620,37 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         from sklearn.metrics import mean_squared_error
         def my_eval(y_pred, y_true):
 
-            if setting_params["target"][0] == "target":
-            
-                y_pred = y_pred*3.0
-                y_true = y_true*3.0
-                y_pred = np.where(y_pred < 0, 0, y_pred)
-                y_pred = np.where(y_pred > 3, 3, y_pred)
-
-            elif setting_params["target"][0] == "year_bin50":
-
-               
+            if setting_params["type"]=="regression":
+                if setting_params["target"][0] == "target":
                 
+                    y_pred = y_pred*3.0
+                    y_true = y_true*3.0
+                    y_pred = np.where(y_pred < 0, 0, y_pred)
+                    y_pred = np.where(y_pred > 3, 3, y_pred)
 
-                y_pred = y_pred*11.0
-                y_true = y_true*11.0
+                elif setting_params["target"][0] == "year_bin50":
 
-                y_pred = np.where(y_pred <= 3, 0, y_pred)
-                y_pred = np.where((y_pred > 3) & (y_pred <= 5), 1, y_pred)
-                y_pred = np.where((y_pred > 5) & (y_pred <= 7), 2, y_pred)
-                y_pred = np.where(y_pred > 7, 3, y_pred)
+                
+                    
 
-                y_true = np.where(y_true <= 3, 0, y_true)
-                y_true = np.where((y_true > 3) & (y_true <= 5), 1, y_true)
-                y_true = np.where((y_true > 5) & (y_true <= 7), 2, y_true)
-                y_true = np.where(y_true > 7, 3, y_true)
+                    y_pred = y_pred*11.0
+                    y_true = y_true*11.0
 
-            
+                    y_pred = np.where(y_pred <= 3, 0, y_pred)
+                    y_pred = np.where((y_pred > 3) & (y_pred <= 5), 1, y_pred)
+                    y_pred = np.where((y_pred > 5) & (y_pred <= 7), 2, y_pred)
+                    y_pred = np.where(y_pred > 7, 3, y_pred)
+
+                    y_true = np.where(y_true <= 3, 0, y_true)
+                    y_true = np.where((y_true > 3) & (y_true <= 5), 1, y_true)
+                    y_true = np.where((y_true > 5) & (y_true <= 7), 2, y_true)
+                    y_true = np.where(y_true > 7, 3, y_true)
+            else:
+
+                #
+                y_pred = np.argmax(y_pred, axis=1)
+
+            #pdb.set_trace()
             return np.sqrt(mean_squared_error(y_true, y_pred))
 
             
@@ -1775,13 +1793,6 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         elif setting_params["target"][0] == "year_bin50":
             final_use_columns = id_list + ["loss_weight"]
 
-        # if setting_params["pred_only"]==False:
-        #     dropcols = [col for col in df_train.columns if col not in final_use_columns]
-        #     dropcols.remove(setting_params["target"][0])
-        #     df_train.drop(columns=dropcols, inplace=True)
-
-            
-        #     #df_train.to_pickle(PROC_DIR/"df_proc_train_nn.pkl")
 
 
     elif (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
@@ -1937,7 +1948,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # df_all = pd.concat([df_train, df_test], sort=False)
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
-        model_wrapper = ResNet_Wrapper()
+        model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
         #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2069,9 +2080,14 @@ def main(setting_params):
     mode=setting_params["mode"]
     setting_params["index"] = "object_id"
     
-    target_cols= ["target"] #year_bin50
+    if setting_params["type"]=="regression":
+        target_cols= ["target"] #year_bin50
+        setting_params["num_class"] = len(target_cols)
+    else:
+        target_cols= ["target"]
+        setting_params["num_class"] = 4
    
-    setting_params["num_class"] = len(target_cols)
+    
 
 
 

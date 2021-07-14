@@ -862,18 +862,23 @@ class PytorchLightningModelBase(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         return optimizer
     
-    
+
+
+
 class myResNet(PytorchLightningModelBase):
-    def __init__(self) -> None:
+    def __init__(self, num_out, regression_flag=True) -> None:
         super().__init__()
         
+        self.regression_flag=regression_flag
+        self.num_out = num_out
 
         self.model = timm.create_model('efficientnet_b0', pretrained=False)
-        #print(self.model)
+        #
 
-        self.model.classifier = nn.Linear(in_features=1280, out_features=1, bias=True)
+        self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
         #pdb.set_trace()
-
+        #print(self.model)
+        print(self.regression_flag)
 
         #self.model = resnet18(pretrained=False)
         #self.model.fc = nn.Linear(in_features=512, out_features=1, bias=True)
@@ -899,12 +904,30 @@ class myResNet(PytorchLightningModelBase):
         # print(f"y_true : {y_true.shape}")
         # print(f"y_pred : {y_pred.shape}")
         # print(f"weight : {weight.shape}")
-        # pdb.set_trace()
+        #pdb.set_trace()
 
-        if weight is None:
-            return nn.MSELoss()(y_pred.squeeze().float(), y_true.float())
+        if self.regression_flag:
+
+            if weight is None:
+                return nn.MSELoss()(y_pred.squeeze().float(), y_true.float())
+            else:
+                return weighted_mse_loss(input=y_pred.squeeze().float(), target=y_true.float(), weight=weight.float())
         else:
-            return weighted_mse_loss(input=y_pred.squeeze().float(), target=y_true.float(), weight=weight.float())
+            return nn.CrossEntropyLoss()(y_pred, y_true.long())
+
+    def test_step(self, batch, batch_idx):
+        out = self._forward(batch)
+        
+        if self.regression_flag==False:
+            #pdb.set_trace()
+            out = torch.argmax(out, dim=1)
+        return {'out': out}
+
+    def test_epoch_end(self, outputs):
+        
+        self.final_preds = torch.cat([o['out'] for o in outputs]).data.cpu().detach().numpy().reshape(-1, 1)
+
+        #pdb.set_trace()  
 
 
 class LastLSTM(PytorchLightningModelBase):

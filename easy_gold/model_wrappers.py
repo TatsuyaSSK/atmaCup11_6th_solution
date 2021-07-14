@@ -592,7 +592,7 @@ class PytrochLightningBase():
             json.dump(bs, fp)
 
 class ResNet_Wrapper(PytrochLightningBase):
-    def __init__(self):
+    def __init__(self, num_out, regression_flag):
         
         super().__init__()
         
@@ -601,7 +601,7 @@ class ResNet_Wrapper(PytrochLightningBase):
 
         self.initial_params["dataset_params"] = {}
         
-        self.model = myResNet()
+        self.model = myResNet(num_out=num_out, regression_flag=regression_flag)
 
 class LastQueryTransformer_Wrapper(PytrochLightningBase):
     def __init__(self,

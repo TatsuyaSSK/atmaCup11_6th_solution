@@ -122,11 +122,11 @@ def lgb_prepro():
     df_sub = df_sub.rename(columns={"target":"pred_target"})
 
     df_oof["target"] = df_train["target"]
-    df_sub["target"] = df_test["target"]
+    #df_sub["target"] = df_test["target"]
 
     df_oof.to_pickle(PROC_DIR/"df_proc_train_lgb.pkl")
     df_sub.to_pickle(PROC_DIR/"df_proc_test_lgb.pkl")
         
 if __name__ == '__main__':
     
-    sub_round()
+    lgb_prepro()

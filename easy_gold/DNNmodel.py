@@ -10,7 +10,7 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from abc import ABCMeta, abstractmethod
 import pytorch_lightning as pl
 from torchvision import transforms as T
-from torchvision.models import resnet34, resnet18
+from torchvision.models import resnet34, resnet18, vgg16
 from PIL import Image
 import timm
 
@@ -350,8 +350,57 @@ class MyDatasetResNet(torch.utils.data.Dataset):
 
         w = self.df_train_X.iloc[idx]['loss_weight']
         
-        return [img, w], self.df_train_y.iloc[idx].values[0]
-    
+        return [img, w], self.df_train_y.iloc[idx].values#[0]
+
+
+# class MyDatasetMultiLabel(torch.utils.data.Dataset):
+
+#     def __init__(self, df_train_X, df_train_y, dataset_params, train_flag):
+        
+#         self.df_train_X = df_train_X
+#         self.df_train_y = df_train_y
+        
+#         IMG_MEAN = [0.485, 0.456, 0.406]
+#         IMG_STD = [0.229, 0.224, 0.225]
+
+        
+#         #size = (224, 224)
+#         size = (300, 300)
+#         additional_items = (
+#             [T.Resize(size)]
+#             if not train_flag
+#             else [
+#                 #T.RandomGrayscale(p=0.2),
+#                 T.RandomVerticalFlip(),
+#                 T.RandomHorizontalFlip(),
+#                 # T.ColorJitter(
+#                 #     brightness=0.3,
+#                 #     contrast=0.5,
+#                 #     saturation=[0.8, 1.3],
+#                 #     hue=[-0.05, 0.05],
+#                 # ),
+#                 T.RandomResizedCrop(size),
+#                 T.Resize(size),
+#             ]
+#         )
+
+#         self.transformer = T.Compose(
+#             [*additional_items, T.ToTensor(), T.Normalize(mean=IMG_MEAN, std=IMG_STD)]
+#         )
+        
+#     def __len__(self):
+#         return self.df_train_X.shape[0]
+
+#     def __getitem__(self, idx):
+        
+#         image_name = self.df_train_X.iloc[idx]['image_name']
+#         ppath_to_img = INPUT_DIR/f"photos/{image_name}"
+#         img = Image.open(ppath_to_img)
+#         img = self.transformer(img)
+
+#         w = self.df_train_X.iloc[idx]['loss_weight']
+        
+#         return [img, w], self.df_train_y.iloc[idx].values[0]
 class SequenceTransformer(object):
     def __init__(self):
         pass
@@ -863,7 +912,114 @@ class PytorchLightningModelBase(pl.LightningModule):
         return optimizer
     
 
+class myMultilabelNet(PytorchLightningModelBase):
+    def __init__(self, num_out, regression_flag=True) -> None:
+        super().__init__()
+        
+        self.regression_flag=regression_flag
+        self.num_out = num_out
 
+
+        self.model = timm.create_model('efficientnet_b1', pretrained=False)
+        self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
+        #print(self.model)
+        #pdb.set_trace()
+
+    def _forward(self, batch):
+        
+     
+        img =  batch[0][0]
+        #print(f"img : {img.shape}")
+        out = self.model(img)
+
+        # out_target = out[:, 0]
+        # out_tech = out[:, 1:]
+
+        #pdb.set_trace()
+
+        return out
+
+    def forward(self, batch):
+        out = self._forward(batch)
+        return out
+
+    def criterion(self, y_true, y_pred, weight=None):
+
+        #print(f"y_true : {y_true.shape}")
+        #print(f"y_pred : {y_pred.shape}")
+        # print(f"weight : {weight.shape}")
+        #pdb.set_trace()
+
+        if self.regression_flag:
+
+            if weight is None:
+                loss_target =  nn.MSELoss()(y_pred[:, 0].float(), y_true[:, 0].float())
+            else:
+                loss_target =  weighted_mse_loss(input=y_pred[:, 0].float(), target=y_true[:, 0].float(), weight=weight.float())
+        else:
+            loss_target =  nn.CrossEntropyLoss()(y_pred[:, 0], y_true.long())
+        
+        loss_tech = nn.BCEWithLogitsLoss()(y_pred[:, 1:].float(),  y_true[:, 1:].float())
+
+        return loss_target + 0.1 * loss_tech
+
+    def training_step(self, batch, batch_idx):
+        
+        out = self._forward(batch)
+
+        #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
+
+        out_target = out[:, 0]
+        out_tech = torch.sigmoid(out[:, 1:])
+        #pdb.set_trace()
+        out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+
+        
+
+        train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+        
+
+
+        
+        self.log('loss', loss, logger=False)
+        ret = {'loss': loss}
+
+        for k, v in train_batch_eval_score_dict.items():
+            self.log(f"train_{k}", v, logger=False)
+            ret[f"{k}"] = v
+
+        return ret
+
+
+
+    def validation_step(self, batch, batch_idx):
+
+        out = self._forward(batch)
+
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
+
+        out_target = out[:, 0]
+        out_tech = torch.sigmoid(out[:, 1:])
+        #pdb.set_trace()
+        out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+        
+
+
+        self.log('val_loss', loss, logger=False)
+        ret = {'val_loss': loss}
+
+        for k, v in val_batch_eval_score_dict.items():
+            self.log(f"val_{k}", v, logger=False)
+            ret[f"{k}"] = v
+        
+
+        #self.log('val_loss', loss)
+
+
+        return ret
 
 class myResNet(PytorchLightningModelBase):
     def __init__(self, num_out, regression_flag=True) -> None:
@@ -872,16 +1028,54 @@ class myResNet(PytorchLightningModelBase):
         self.regression_flag=regression_flag
         self.num_out = num_out
 
-        self.model = timm.create_model('efficientnet_b0', pretrained=False)
+        #self.model = timm.create_model('xception', pretrained=False)
+        #self.model.fc = nn.Linear(in_features=2048, out_features=num_out, bias=True)
+        #self.model.classifier = nn.Linear(in_features=1408, out_features=num_out, bias=True)
+        #
+        #
         #
 
+        self.model = timm.create_model('efficientnet_b1_pruned', pretrained=False)
         self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
-        #pdb.set_trace()
         #print(self.model)
-        print(self.regression_flag)
+        #pdb.set_trace()
+       
+        #self.model = timm.create_model('mobilenetv2_100', pretrained=False)
+        #self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
+
+        
+        #self.model = timm.create_model('seresnet152d', pretrained=False)
+        #self.model.fc = nn.Linear(in_features=2048, out_features=num_out, bias=True)
+        #print(self.model)
+        #pdb.set_trace()
+
+        #self.model = timm.create_model('gluon_senet154', pretrained=False)
+        #self.model.fc = nn.Linear(in_features=2048, out_features=num_out, bias=True)
+        #print(self.model)
+        #pdb.set_trace()
+
+        #self.model = timm.create_model('gluon_resnext101_32x4d', pretrained=False)
+        #self.model.fc = nn.Linear(in_features=2048, out_features=num_out, bias=True)
+        
+
+
+
+        #self.model = vgg16(pretrained=False)
+        #self.model.classifier[6] = nn.Linear(in_features=4096, out_features=num_out, bias=True)
+        
+        #self.model = timm.create_model('swin_base_patch4_window7_224', pretrained=False)
+        #self.model.head = nn.Linear(in_features=1024, out_features=num_out, bias=True)
+        #
+        #
+
+        #from pprint import pprint
+        #model_names = timm.list_models(pretrained=True)
+        #pprint(model_names)
+        #sys.exit()
+        
 
         #self.model = resnet18(pretrained=False)
-        #self.model.fc = nn.Linear(in_features=512, out_features=1, bias=True)
+        #self.model.fc = nn.Linear(in_features=512, out_features=num_out, bias=True)
         
     def _forward(self, batch):
         

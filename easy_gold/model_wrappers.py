@@ -603,6 +603,19 @@ class ResNet_Wrapper(PytrochLightningBase):
         
         self.model = myResNet(num_out=num_out, regression_flag=regression_flag)
 
+
+class multiLabelNet(PytrochLightningBase):
+    def __init__(self, num_out, regression_flag):
+        
+        super().__init__()
+        
+        self.initial_params["dataset_class"] = MyDatasetResNet
+        self.initial_params["collate_fn"] = None #collate_fn_Transformer
+
+        self.initial_params["dataset_params"] = {}
+        
+        self.model = myMultilabelNet(num_out=num_out, regression_flag=regression_flag)
+
 class LastQueryTransformer_Wrapper(PytrochLightningBase):
     def __init__(self,
                 #f_all, 

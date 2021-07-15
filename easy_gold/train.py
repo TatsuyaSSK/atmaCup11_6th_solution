@@ -1539,7 +1539,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         if target_col_list[0]=="year_bin50":
             folds = myStratifiedKFoldWithGroupID(n_splits=n_fold, shuffle=False, group_id_col="art_series_id", stratified_target_id="target")
         elif target_col_list[0] == "target":
-            folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="art_series_id")
+            folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="art_series_id", stratified_target_id="target")
 
         #folds = KFold(n_fold)
 
@@ -1653,9 +1653,29 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             #pdb.set_trace()
             return np.sqrt(mean_squared_error(y_true, y_pred))
 
+        
+        def eval_multi_rmse(y_pred, y_true):
+
+            return my_eval(y_pred=y_pred[:, 0], y_true=y_true[:, 0])
+
+        from sklearn.metrics import f1_score
+        def eval_multi_tech(y_pred, y_true):
+
+            y_tech = y_pred[:, 1:]
+            y_tech = np.where(y_tech > 0.5, 1, 0)
+
+            #pdb.set_trace()
+            return f1_score(y_true=y_true[:, 1:], y_pred=y_tech, average='samples', zero_division=0)
             
-        eval_metric_name = 'rmse'
-        eval_metric_func_dict= {eval_metric_name:my_eval}
+
+        if setting_params["num_class"] == 1:
+            eval_metric_name = 'rmse'
+            eval_metric_func_dict= {eval_metric_name:my_eval}
+        elif setting_params["num_class"] == 4:
+            eval_metric_name = 'rmse'
+            eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
+            eval_metric_func_dict["mean_f1"] = eval_multi_tech
+
 
 
 
@@ -1948,7 +1968,8 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # df_all = pd.concat([df_train, df_test], sort=False)
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
-        model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
+        #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
+        model_wrapper = multiLabelNet(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
         #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2081,7 +2102,10 @@ def main(setting_params):
     setting_params["index"] = "object_id"
     
     if setting_params["type"]=="regression":
-        target_cols= ["target"] #year_bin50
+        target_cols= ["target", 
+                        "techniques_brush",
+                        "techniques_pen",
+                        "techniques_counterproof"] #year_bin50
         setting_params["num_class"] = len(target_cols)
     else:
         target_cols= ["target"]
@@ -2154,8 +2178,8 @@ def argParams():
     parser.add_argument('-m', '--mode', default="nn", choices=['lgb','nn','graph', 'ave', 'stack'] )
     parser.add_argument('-t', '--type', default="regression", choices=['classification','regression'] )
     parser.add_argument('-stack_dir', '--stacking_dir_name', type=str, )
-    parser.add_argument('-ep', '--epochs', type=int, default=4)
-    parser.add_argument('-es', '--early_stopping_rounds', type=int, default=10)
+    parser.add_argument('-ep', '--epochs', type=int, default=100)
+    parser.add_argument('-es', '--early_stopping_rounds', type=int, default=20)
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.005)
     parser.add_argument('-batch', '--batch_size', type=int, default=128)
     parser.add_argument('-num_workers', '--num_workers', type=int, default=2)

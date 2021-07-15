@@ -57,17 +57,22 @@ def stratified_group_k_fold(X, y, groups, k, seed=None):
 
 class StratifiedKFoldWithGroupID():
 
-    def __init__(self, group_id_col, n_splits, random_state=None, *args, **kwargs):
+    def __init__(self, group_id_col, stratified_target_id, n_splits, random_state=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.group_id_col = group_id_col
+        self.stratified_target_id = stratified_target_id
         self.n_splits = n_splits
         self.random_state = random_state
 
     def split(self, _df_X, _se_y, _group, *args, **kwargs):
 
         df = _df_X[[self.group_id_col]]
-        df["group_target"] = _se_y
+
+        if isinstance(_se_y, pd.DataFrame):
+            df["group_target"] = _se_y[self.stratified_target_id]
+        else:
+            df["group_target"] = _se_y
 
         df["group_target"]  = procLabelEncToSeries(df["group_target"])
         df = df.reset_index()

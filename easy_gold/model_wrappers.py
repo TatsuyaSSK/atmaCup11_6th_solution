@@ -605,7 +605,7 @@ class ResNet_Wrapper(PytrochLightningBase):
 
 
 class multiLabelNet(PytrochLightningBase):
-    def __init__(self, num_out, regression_flag):
+    def __init__(self, num_out, regression_flag, tech_weight, material_weight):
         
         super().__init__()
         
@@ -614,7 +614,7 @@ class multiLabelNet(PytrochLightningBase):
 
         self.initial_params["dataset_params"] = {}
         
-        self.model = myMultilabelNet(num_out=num_out, regression_flag=regression_flag)
+        self.model = myMultilabelNet(num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
 class LastQueryTransformer_Wrapper(PytrochLightningBase):
     def __init__(self,

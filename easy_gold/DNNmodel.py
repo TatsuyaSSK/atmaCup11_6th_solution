@@ -913,11 +913,14 @@ class PytorchLightningModelBase(pl.LightningModule):
     
 
 class myMultilabelNet(PytorchLightningModelBase):
-    def __init__(self, num_out, regression_flag=True) -> None:
+    def __init__(self, num_out, regression_flag=True, tech_weight=None, material_weight=None) -> None:
         super().__init__()
         
         self.regression_flag=regression_flag
         self.num_out = num_out
+
+        self.tech_weight = tech_weight
+        self.material_weight = material_weight
 
 
         self.model = timm.create_model('efficientnet_b1', pretrained=False)
@@ -959,9 +962,10 @@ class myMultilabelNet(PytorchLightningModelBase):
         else:
             loss_target =  nn.CrossEntropyLoss()(y_pred[:, 0], y_true.long())
         
-       # w_tech = torch.tensor([1.0/2142.0, 1.0/1566.0, 1.0/17.0],device=y_pred.device)
-        loss_tech = nn.BCEWithLogitsLoss(pos_weight =None)(y_pred[:, 1:4].float(),  y_true[:, 1:4].float())
-        loss_material = nn.BCEWithLogitsLoss(pos_weight =None)(y_pred[:, 4:].float(),  y_true[:, 4:].float())
+        tech_weight = torch.tensor(self.tech_weight,device=y_pred.device) if self.tech_weight is not None else None
+        material_weight = torch.tensor(self.material_weight,device=y_pred.device)if self.material_weight is not None else None
+        loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:4].float(),  y_true[:, 1:4].float())
+        loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, 4:].float(),  y_true[:, 4:].float())
 
         return loss_target + loss_tech + loss_material
 

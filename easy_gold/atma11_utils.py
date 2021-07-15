@@ -5,6 +5,7 @@ Created on Sun Jul 11 02:20:17 2021
 @author: r00526841
 """
 
+from http.client import PROCESSING
 from pathlib import Path
 
 import numpy as np
@@ -103,7 +104,28 @@ def sub_round():
     df_sub["target"] = df_sub["target"].map(lambda x: 0 if x < th_list[0] else (1 if x < th_list[1] else (2 if x < th_list[2] else 3)))
     df_sub.to_csv(OUTPUT_DIR/"20210713_030317_ResNet_Wrapper--0.800492--_submission_round.csv", index=False)
     
-        
+
+def lgb_prepro():
+
+    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
+    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test_nn.pkl')
+
+    sub_name = "20210715_181909_multiLabelNet--0.850927--"
+    df_oof = pd.read_csv(OUTPUT_DIR/f"{sub_name}_oof.csv", index_col="object_id") 
+    df_sub = pd.read_csv(OUTPUT_DIR/f"{sub_name}_submission.csv")
+    
+
+    df_sub.index = df_test.index
+
+
+    df_oof = df_oof.rename(columns={"target":"pred_target"})
+    df_sub = df_sub.rename(columns={"target":"pred_target"})
+
+    df_oof["target"] = df_train["target"]
+    df_sub["target"] = df_test["target"]
+
+    df_oof.to_pickle(PROC_DIR/"df_proc_train_lgb.pkl")
+    df_sub.to_pickle(PROC_DIR/"df_proc_test_lgb.pkl")
         
 if __name__ == '__main__':
     

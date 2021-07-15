@@ -1409,6 +1409,44 @@ def calcWeight(df_train, df_test):
     return df_train, df_test
 
 
+def calcMetaWeight(df_train, df_test, setting_params):
+
+    tech_cols = ["techniques_brush",
+                "techniques_pen",
+                "techniques_counterproof"]
+
+    tech_weight = []
+    for col in tech_cols:
+        num_pos = df_train[col].sum()
+        num_neg = df_train.loc[df_train[col]==0].shape[0]
+        tech_weight.append(float(num_neg)/float(num_pos))
+
+
+    material_cols = ["materials_cardboard", 
+                    "materials_chalk",
+                    "materials_deck paint",
+                    "materials_gouache (paint)",
+                    "materials_graphite (mineral)",
+                    "materials_ink",
+                    "materials_oil paint (paint)",
+                    "materials_paint (coating)",
+                    "materials_paper",
+                    "materials_parchment (animal material)",
+                    "materials_pencil",
+                    "materials_prepared paper",
+                    "materials_watercolor (paint)",]
+
+    material_weight = []
+    for col in material_cols:
+        num_pos = df_train[col].sum()
+        num_neg = df_train.loc[df_train[col]==0].shape[0]
+        material_weight.append(float(num_neg)/float(num_pos))
+
+    setting_params["tech_weight"] = tech_weight
+    setting_params["material_weight"] = material_weight
+    #pdb.set_trace()
+    return setting_params
+
 gl_norm_dict = {}
 
 def preproc(df_train, df_test, target_col_list, setting_params):
@@ -1435,6 +1473,9 @@ def preproc(df_train, df_test, target_col_list, setting_params):
         
 
         df_train, df_test = calcWeight(df_train, df_test)
+
+        if setting_params["num_class"] >= 4:
+            setting_params = calcMetaWeight(df_train, df_test, setting_params)
 
     return df_train, df_test
 
@@ -1978,7 +2019,9 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
         #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        model_wrapper = multiLabelNet(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
+        model_wrapper = multiLabelNet(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
+                                    tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
+        
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
         #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2109,32 +2152,37 @@ def main(setting_params):
 
     mode=setting_params["mode"]
     setting_params["index"] = "object_id"
-    
-    if setting_params["type"]=="regression":
-        target_cols= ["target", 
-                        "techniques_brush",
-                        "techniques_pen",
-                        "techniques_counterproof",
 
-                        "materials_cardboard", 
-                        "materials_chalk",
-                        "materials_deck paint",
-                        "materials_gouache (paint)",
-                        "materials_graphite (mineral)",
-                        "materials_ink",
-                        "materials_oil paint (paint)",
-                        "materials_paint (coating)",
-                        "materials_paper",
-                        "materials_parchment (animal material)",
-                        "materials_pencil",
-                        "materials_prepared paper",
-                        "materials_watercolor (paint)",
-                        
-                        ] #year_bin50
-        setting_params["num_class"] = len(target_cols)
-    else:
+    if mode == "lgb":
         target_cols= ["target"]
-        setting_params["num_class"] = 4
+        setting_params["num_class"] = len(target_cols)
+    elif mode == "nn":
+    
+        if setting_params["type"]=="regression":
+            target_cols= ["target", 
+                            "techniques_brush",
+                            "techniques_pen",
+                            "techniques_counterproof",
+
+                            "materials_cardboard", 
+                            "materials_chalk",
+                            "materials_deck paint",
+                            "materials_gouache (paint)",
+                            "materials_graphite (mineral)",
+                            "materials_ink",
+                            "materials_oil paint (paint)",
+                            "materials_paint (coating)",
+                            "materials_paper",
+                            "materials_parchment (animal material)",
+                            "materials_pencil",
+                            "materials_prepared paper",
+                            "materials_watercolor (paint)",
+                            
+                            ] #year_bin50
+            setting_params["num_class"] = len(target_cols)
+        else:
+            target_cols= ["target"]
+            setting_params["num_class"] = 4
    
     
 
@@ -2145,7 +2193,7 @@ def main(setting_params):
         if mode == "ave":
             mode = "nn"
 
-        df_train = pd.read_pickle(PROC_DIR / f'df_proc_train.pkl')
+        df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_{mode}.pkl')
         df_train.index.name = setting_params["index"]
 
 
@@ -2156,7 +2204,7 @@ def main(setting_params):
 
 
 
-    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test.pkl')
+    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test_{mode}.pkl')
 
    
     

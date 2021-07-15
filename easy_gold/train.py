@@ -1661,20 +1661,29 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         from sklearn.metrics import f1_score
         def eval_multi_tech(y_pred, y_true):
 
-            y_tech = y_pred[:, 1:]
+            y_tech = y_pred[:, 1:4]
             y_tech = np.where(y_tech > 0.5, 1, 0)
 
             #pdb.set_trace()
-            return f1_score(y_true=y_true[:, 1:], y_pred=y_tech, average='samples', zero_division=0)
+            return f1_score(y_true=y_true[:, 1:4], y_pred=y_tech, average='samples', zero_division=0)
+
+        def eval_multi_material(y_pred, y_true):
+
+            y_material = y_pred[:, 4:]
+            y_material = np.where(y_material > 0.5, 1, 0)
+
+            #pdb.set_trace()
+            return f1_score(y_true=y_true[:, 4:], y_pred=y_material, average='samples', zero_division=0)
             
 
         if setting_params["num_class"] == 1:
             eval_metric_name = 'rmse'
             eval_metric_func_dict= {eval_metric_name:my_eval}
-        elif setting_params["num_class"] == 4:
+        elif setting_params["num_class"] >= 4:
             eval_metric_name = 'rmse'
             eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
-            eval_metric_func_dict["mean_f1"] = eval_multi_tech
+            eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
+            eval_metric_func_dict["mean_f1_material"] = eval_multi_material
 
 
 
@@ -2105,7 +2114,23 @@ def main(setting_params):
         target_cols= ["target", 
                         "techniques_brush",
                         "techniques_pen",
-                        "techniques_counterproof"] #year_bin50
+                        "techniques_counterproof",
+
+                        "materials_cardboard", 
+                        "materials_chalk",
+                        "materials_deck paint",
+                        "materials_gouache (paint)",
+                        "materials_graphite (mineral)",
+                        "materials_ink",
+                        "materials_oil paint (paint)",
+                        "materials_paint (coating)",
+                        "materials_paper",
+                        "materials_parchment (animal material)",
+                        "materials_pencil",
+                        "materials_prepared paper",
+                        "materials_watercolor (paint)",
+                        
+                        ] #year_bin50
         setting_params["num_class"] = len(target_cols)
     else:
         target_cols= ["target"]

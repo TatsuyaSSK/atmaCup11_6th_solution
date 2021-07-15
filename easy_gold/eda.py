@@ -945,7 +945,7 @@ def main(params):
     
     target_val="target"
 
-    new_cols = getColumnsFromParts(["techniques"], df_train.columns)
+    new_cols = getColumnsFromParts(["materials"], df_train.columns)
     
     #new_cols=["year_bin50"] #df_train.columns
     exclude = []

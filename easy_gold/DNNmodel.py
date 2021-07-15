@@ -960,9 +960,10 @@ class myMultilabelNet(PytorchLightningModelBase):
             loss_target =  nn.CrossEntropyLoss()(y_pred[:, 0], y_true.long())
         
        # w_tech = torch.tensor([1.0/2142.0, 1.0/1566.0, 1.0/17.0],device=y_pred.device)
-        loss_tech = nn.BCEWithLogitsLoss(pos_weight =None)(y_pred[:, 1:].float(),  y_true[:, 1:].float())
+        loss_tech = nn.BCEWithLogitsLoss(pos_weight =None)(y_pred[:, 1:4].float(),  y_true[:, 1:4].float())
+        loss_material = nn.BCEWithLogitsLoss(pos_weight =None)(y_pred[:, 4:].float(),  y_true[:, 4:].float())
 
-        return loss_target + loss_tech
+        return loss_target + loss_tech + loss_material
 
     def training_step(self, batch, batch_idx):
         
@@ -1028,7 +1029,7 @@ class myMultilabelNet(PytorchLightningModelBase):
         out_tech = torch.sigmoid(out[:, 1:])
         #pdb.set_trace()
         out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
-        
+
         #pdb.set_trace()
         return {'out': out}
 

@@ -318,7 +318,8 @@ class MyDatasetResNet(torch.utils.data.Dataset):
 
         
         #size = (224, 224)
-        size = (300, 300)
+        #size = (300, 300)
+        size = (512, 512)
         additional_items = (
             [T.Resize(size)]
             if not train_flag
@@ -928,6 +929,12 @@ class myMultilabelNet(PytorchLightningModelBase):
 
         self.model = timm.create_model('efficientnet_b1', pretrained=False)
         self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
+
+        # self.fc_reg = nn.Linear(in_features=640, out_features=1, bias=True)
+        # self.fc_tech = nn.Linear(in_features=640, out_features=3, bias=True)
+        # self.fc_material = nn.Linear(in_features=640, out_features=num_out-4, bias=True)
+
+
         #print(self.model)
         #pdb.set_trace()
 
@@ -938,10 +945,17 @@ class myMultilabelNet(PytorchLightningModelBase):
         #print(f"img : {img.shape}")
         out = self.model(img)
 
+        #out_target = self.fc_reg(out)
+        #out_tech = self.fc_tech(out)
+        #out_material = self.fc_material(out)
+
+        #pdb.set_trace()
+        #out = torch.cat([out_target.unsqueeze(1), out_tech, out_material], axis=-1)
+        #out = torch.cat([out_target, out_tech, out_material], axis=-1)
         # out_target = out[:, 0]
         # out_tech = out[:, 1:]
 
-        #pdb.set_trace()
+        #
 
         return out
 
@@ -968,11 +982,11 @@ class myMultilabelNet(PytorchLightningModelBase):
         tech_weight = None#torch.tensor(self.tech_weight,device=y_pred.device) if self.tech_weight is not None else None
         material_weight = None#torch.tensor(self.material_weight,device=y_pred.device)if self.material_weight is not None else None
 
-        num_tech = 2
+        num_tech = 3
         loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
-        loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
+        #loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
 
-        return loss_target +  0 * loss_tech + loss_material
+        return loss_target +  loss_tech #+ loss_material
 
     def training_step(self, batch, batch_idx):
         

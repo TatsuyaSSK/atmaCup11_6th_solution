@@ -1700,7 +1700,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
             return my_eval(y_pred=y_pred[:, 0], y_true=y_true[:, 0])
 
-        num_tech=2
+        num_tech=3
         from sklearn.metrics import f1_score
         def eval_multi_tech(y_pred, y_true):
 
@@ -2158,7 +2158,7 @@ def main(setting_params):
             target_cols= ["target", 
                             "techniques_brush",
                             "techniques_pen",
-                            #"techniques_counterproof",
+                            "techniques_counterproof",
 
                             #"materials_cardboard", 
                             "materials_chalk",

@@ -2194,18 +2194,18 @@ def main(setting_params):
                             "techniques_pen",
                             "techniques_counterproof",
 
-                            #"materials_cardboard", 
+                            "materials_cardboard",  #
                             "materials_chalk",
                             "materials_deck paint",
-                            #"materials_gouache (paint)",
+                            "materials_gouache (paint)", #
                             "materials_graphite (mineral)",
                             "materials_ink",
-                            #"materials_oil paint (paint)",
-                            #"materials_paint (coating)",
+                            "materials_oil paint (paint)", #
+                            "materials_paint (coating)",#
                             "materials_paper",
-                            #"materials_parchment (animal material)",
+                            "materials_parchment (animal material)",#
                             "materials_pencil",
-                            #"materials_prepared paper",
+                            "materials_prepared paper",#
                             "materials_watercolor (paint)",
                             
                             ] #year_bin50

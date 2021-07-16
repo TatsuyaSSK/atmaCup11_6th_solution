@@ -1700,22 +1700,23 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
             return my_eval(y_pred=y_pred[:, 0], y_true=y_true[:, 0])
 
+        num_tech=2
         from sklearn.metrics import f1_score
         def eval_multi_tech(y_pred, y_true):
 
-            y_tech = y_pred[:, 1:4]
+            y_tech = y_pred[:, 1:num_tech+1]
             y_tech = np.where(y_tech > 0.5, 1, 0)
 
             #pdb.set_trace()
-            return f1_score(y_true=y_true[:, 1:4], y_pred=y_tech, average='samples', zero_division=0)
+            return f1_score(y_true=y_true[:, 1:num_tech+1], y_pred=y_tech, average='samples', zero_division=0)
 
         def eval_multi_material(y_pred, y_true):
 
-            y_material = y_pred[:, 4:]
+            y_material = y_pred[:, num_tech+1:]
             y_material = np.where(y_material > 0.5, 1, 0)
 
             #pdb.set_trace()
-            return f1_score(y_true=y_true[:, 4:], y_pred=y_material, average='samples', zero_division=0)
+            return f1_score(y_true=y_true[:, num_tech+1:], y_pred=y_material, average='samples', zero_division=0)
             
 
         if setting_params["num_class"] == 1:
@@ -2157,7 +2158,7 @@ def main(setting_params):
             target_cols= ["target", 
                             "techniques_brush",
                             "techniques_pen",
-                            "techniques_counterproof",
+                            #"techniques_counterproof",
 
                             #"materials_cardboard", 
                             "materials_chalk",

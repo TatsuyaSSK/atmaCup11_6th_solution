@@ -11,7 +11,7 @@ from dateutil.relativedelta import relativedelta
 from collections import Counter, defaultdict
 from utils import *
 
-def stratified_group_k_fold(X, y, groups, k, seed=None):
+def stratified_group_k_fold(X, y, groups, k, seed=2021):
     labels_num = np.max(y) + 1
     y_counts_per_group = defaultdict(lambda: np.zeros(labels_num))
     y_distr = Counter()

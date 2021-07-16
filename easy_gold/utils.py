@@ -66,12 +66,13 @@ import sqlite3
 
 #from tsfresh.utilities.dataframe_functions import roll_time_series
 #from tsfresh import extract_features
-
+SEED_NUMBER=2020
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
-set_seed(2020)
+set_seed(SEED_NUMBER)
 
 pd.set_option('display.max_columns', 5000)
 pd.set_option('display.max_rows', 1000)

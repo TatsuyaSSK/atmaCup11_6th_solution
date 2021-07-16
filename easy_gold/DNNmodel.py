@@ -27,10 +27,13 @@ print(torch.__version__)
 
 def set_seed_torch(seed):
     torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed_torch(5)
+
+
+set_seed_torch(SEED_NUMBER)
 
 
 def mse_loss(input, target):
@@ -964,10 +967,12 @@ class myMultilabelNet(PytorchLightningModelBase):
         
         tech_weight = None#torch.tensor(self.tech_weight,device=y_pred.device) if self.tech_weight is not None else None
         material_weight = None#torch.tensor(self.material_weight,device=y_pred.device)if self.material_weight is not None else None
-        loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:4].float(),  y_true[:, 1:4].float())
-        loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, 4:].float(),  y_true[:, 4:].float())
 
-        return loss_target +  loss_tech + loss_material
+        num_tech = 2
+        loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
+        loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
+
+        return loss_target +  0 * loss_tech + loss_material
 
     def training_step(self, batch, batch_idx):
         

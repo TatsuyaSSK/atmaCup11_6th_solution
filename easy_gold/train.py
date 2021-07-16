@@ -400,7 +400,7 @@ class RegressorModel(object):
 
                 ret = -1
                 if params["use_old_file"]:
-                    ret = model.procLoadModel(params["model_dir_name"], prefix=f"fold_{fold_n}")
+                    ret = model.procLoadModel(params["model_dir_name"], prefix=f"fold_{fold_n}", params=params)
 
                     model.feature_importances_ = np.zeros(len(X_train.columns)) #X_train.columns))
 
@@ -470,7 +470,7 @@ class RegressorModel(object):
                 logger.debug(df_permutation_total.loc[df_permutation_total["weight_mean"]<=0].index)
 
         # if params['verbose']:
-        self.calc_scores_()
+        self.calc_scores_(model_dir_name=params["model_dir_name"])
 
         if self.post_processor is not None:
             cpu_stats("before post_preprocesser")
@@ -569,13 +569,13 @@ class RegressorModel(object):
 
         return datasets['X_train'], datasets['X_valid'], datasets['X_holdout']
 
-    def calc_scores_(self):
+    def calc_scores_(self, model_dir_name):
         logger.debug("\n")
         datasets = [k for k, v in [v['scores'] for k, v in self.folds_dict.items()][0].items() if len(v) > 0]
         self.scores = {}
         for d in datasets:
             scores = [v['scores'][d][self.eval_metric] for k, v in self.folds_dict.items()]
-            print_text = "[{} : {}] CV mean score on {}: {:.4f} +/- {:.4f} std. ::: {}".format(self.target_name_idx, self.target_name, d, np.mean(scores), np.std(scores), scores)
+            print_text = "[{} : {} : {}] CV mean score on {}: {:.4f} +/- {:.4f} std. ::: {}".format(model_dir_name, self.target_name_idx, self.target_name, d, np.mean(scores), np.std(scores), scores)
             logger.debug(self.model_wrapper.__class__.__name__)
             logger.debug(print_text)
             if not ON_KAGGLE:
@@ -1534,6 +1534,37 @@ def postproc(df_y_pred, df_oof, df_train, df_test, setting_params):
 
     return df_y_pred, df_oof
 
+def calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, setting_params):
+
+    if PROJECT_NAME == "atma11":
+        
+        df_oof = df_oof.reindex(df_train.index)
+        y_true = df_train[["target"]].values * 3
+        y_oof_pred = df_oof[["target"]].values
+        
+        from sklearn.metrics import mean_squared_error
+        final_score = np.sqrt(mean_squared_error(y_true, y_oof_pred))
+
+
+
+        #final_eval_score_dict=calcEvalScoreDict(y_true=y_true, y_pred=y_oof_pred, eval_metric_func_dict=eval_metric_func_dict)
+        #pdb.set_trace()
+
+
+        print_text = f"{setting_params['model_dir_name']} final score : {final_score}"
+        print(print_text)
+        if not ON_KAGGLE:
+            slack.notify(text=print_text)
+
+
+    else:
+        final_score = np.nan
+    return final_score
+
+
+
+
+
 
 def trainMain(df_train, df_test, target_col_list, setting_params):
 
@@ -2069,8 +2100,10 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
     df_y_pred, df_oof = postproc(df_y_pred, df_oof, df_train, df_test, setting_params)
 
+    final_score = calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, setting_params)
 
-    return df_y_pred, df_oof, valid_score, model_name
+
+    return df_y_pred, df_oof, valid_score, model_name, final_score
 
 
 
@@ -2079,7 +2112,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred, df_oof, valid_score, model_name, setting_params):
 
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
-    prefix = "{}_{}--{:.6f}--".format(now, model_name,valid_score)
+    prefix = "{}_{}_{}--{:.6f}--".format(setting_params["model_dir_name"], now, model_name,valid_score)
 
 
     df_save_oof = df_oof.reset_index()
@@ -2226,7 +2259,7 @@ def main(setting_params):
 
     if (mode  == "nn")| (mode  == "lgb")| (mode == "ave") | (mode == "stack"):
 
-        df_y_pred_each, df_oof, valid_score, model_name = trainMain(df_train, df_test, target_cols, setting_params)
+        df_y_pred_each, df_oof, valid_score, model_name, final_score = trainMain(df_train, df_test, target_cols, setting_params)
         
 
         if setting_params["debug"]:
@@ -2239,7 +2272,7 @@ def main(setting_params):
             df_oof = df_oof.rename(columns={target_cols[0]:"target"})
             df_y_pred = df_y_pred.rename(columns={target_cols[0]:"target"})
 
-        saveSubmission(OUTPUT_DIR, df_train, df_test, target_cols, df_y_pred, df_oof, valid_score, model_name, setting_params)
+        saveSubmission(OUTPUT_DIR, df_train, df_test, target_cols, df_y_pred, df_oof, final_score, model_name, setting_params)
 
 
 def argParams():

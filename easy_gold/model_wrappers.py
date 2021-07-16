@@ -451,7 +451,7 @@ class PytrochLightningBase():
 
         self.best_iteration_ = 1
 
-        
+        self.reload_flag = False
 
         self.model = None
     #     self.setModel()
@@ -570,7 +570,13 @@ class PytrochLightningBase():
         self.model.oof_prediction = oof_flag
         if self.model.oof_prediction==False:
             self.trainer.logger = None 
-        self.trainer.test(test_dataloaders=dataloader_test, ckpt_path='best')
+
+        if self.reload_flag:
+            #self.reload_flag=False
+            self.trainer.test(test_dataloaders=dataloader_test, model=self.model)
+        else:
+            
+            self.trainer.test(test_dataloaders=dataloader_test, ckpt_path='best')
         final_preds = self.model.final_preds
 
         #pdb.set_trace()
@@ -590,6 +596,59 @@ class PytrochLightningBase():
         
         with open(str(ppath_to_model).replace("model__", "bs__").replace("pkl", "json"), 'w') as fp:
             json.dump(bs, fp)
+
+
+    def procLoadModel(self, model_dir_name, prefix, params):
+        self.edit_params = params
+
+        self.model.cuda()
+        #show_cuda("init")
+        
+        if params["multi_gpu"]:
+            self.model = nn.DataParallel(self.model)
+        
+        ppath_to_save_dir = PATH_TO_UPLOAD_MODEL_PARENT_DIR / model_dir_name
+        print(f"ppath_to_save_dir : {ppath_to_save_dir}")
+        print(list(ppath_to_save_dir.glob(f'model__{prefix}*')))
+        #print(list(ppath_to_save_dir.iterdir()))
+        
+        name_list = list(ppath_to_save_dir.glob(f'model__{prefix}*'))
+        if len(name_list)==0:
+            print(f'[ERROR] Trained nn model was NOT EXITS! : {prefix}')
+            return -1
+        ppath_to_model = name_list[0]
+
+
+        self.model.load_state_dict(torch.load(str(ppath_to_model)))
+        print(f'Trained nn model was loaded! : {ppath_to_model}')
+        
+        a = int(re.findall('iter_(\d+)__', str(ppath_to_model))[0])
+        
+        
+   
+        #print(self.model.best_iteration_ )
+        #self.model.best_iteration_ 
+        self.best_iteration_ = a
+        
+        path_to_json = str(ppath_to_model).replace("model__", "bs__").replace("pkl", "json")
+        if not os.path.exists(path_to_json):
+            print(f'[ERROR] Trained nn json was NOT EXITS! : {path_to_json}')
+            return -1
+        with open(path_to_json) as fp:
+            self.best_score_ = json.load(fp)
+            #self.model._best_score = json.load(fp)
+
+        
+
+        self.trainer = pl.Trainer(
+                        num_sanity_val_steps=0,
+                        gpus=self.edit_params["use_gpu"], 
+                        check_val_every_n_epoch=self.edit_params["val_every"],
+                        max_epochs=self.edit_params["epochs"],
+        )
+        self.reload_flag = True
+
+        return 0
 
 class ResNet_Wrapper(PytrochLightningBase):
     def __init__(self, num_out, regression_flag):

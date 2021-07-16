@@ -1568,7 +1568,8 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     elif setting_params["mode"]=="lgb":
         #folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="path")
         #folds = myStratifiedKFoldWithGroupID(n_splits=n_fold, shuffle=False, group_id_col="path", stratified_target_id="floor")
-        folds = siteStratifiedPathGroupKFold(df_test=df_test, n_splits=n_fold, group_id_col="path", stratified_target_id="site_id")
+        #folds = siteStratifiedPathGroupKFold(df_test=df_test, n_splits=n_fold, group_id_col="path", stratified_target_id="site_id")
+        folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="art_series_id", stratified_target_id="target")
 
 
     else:
@@ -1638,7 +1639,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
 
         else:
-            eval_metric_name =  'l1'
+            eval_metric_name =  'rmse'
             eval_metric_func_dict= {eval_metric_name:eval_metric_name}
             
 
@@ -1699,22 +1700,23 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
             return my_eval(y_pred=y_pred[:, 0], y_true=y_true[:, 0])
 
+        num_tech=3
         from sklearn.metrics import f1_score
         def eval_multi_tech(y_pred, y_true):
 
-            y_tech = y_pred[:, 1:4]
+            y_tech = y_pred[:, 1:num_tech+1]
             y_tech = np.where(y_tech > 0.5, 1, 0)
 
             #pdb.set_trace()
-            return f1_score(y_true=y_true[:, 1:4], y_pred=y_tech, average='samples', zero_division=0)
+            return f1_score(y_true=y_true[:, 1:num_tech+1], y_pred=y_tech, average='samples', zero_division=0)
 
         def eval_multi_material(y_pred, y_true):
 
-            y_material = y_pred[:, 4:]
+            y_material = y_pred[:, num_tech+1:]
             y_material = np.where(y_material > 0.5, 1, 0)
 
             #pdb.set_trace()
-            return f1_score(y_true=y_true[:, 4:], y_pred=y_material, average='samples', zero_division=0)
+            return f1_score(y_true=y_true[:, num_tech+1:], y_pred=y_material, average='samples', zero_division=0)
             
 
         if setting_params["num_class"] == 1:
@@ -1780,12 +1782,6 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     if (setting_params["mode"]=="lgb") | (setting_params["mode"]=="lgb2"):
 
         drop_cols=[
-            'timestamp', 
-            'near_floor',
-            
-             'first_ts', 'last_ts', 
-
-       
             ]
 
      
@@ -1799,11 +1795,11 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             if col in use_columns:
                 use_columns.remove(col)
 
-        #groupK_id_list = ["user_id"]
-        id_list = ['path', "site_id", ]#['team1ID', 'team2ID',]
-        time_list = ['first_ts', 'last_ts', 'timestamp',  ]
 
-        rssi_list = getColumnsFromParts(["wifi_rssi", "ib_rssi"], use_columns)
+        id_list = ['art_series_id',]
+        #time_list = ['first_ts', 'last_ts', 'timestamp',  ]
+
+        meta_list = getColumnsFromParts(["techniques_", "materials_"], use_columns)
         #rssi_list = getColumnsFromParts(["ib_rssi"], use_columns)
         #for col in rssi_list:
             #if df_train[col].dtype=="object":
@@ -1813,7 +1809,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
         #pdb.set_trace()
         embedding_features_list= id_list #+ #['brand', 'model', 'android_name', 'api_level', 'version_name', 'version_code'] + id_list
-        continuous_features_list = rssi_list +time_list
+        continuous_features_list = meta_list + ["pred_target"]
                                 # + [
                                 #    #'wifi_ssid', 'wifi_bssid', 'wifi_rssi', 'wifi_frequency', 'wifi_lastseen_ts', 
                                 #    # "mean_max_floor", "mean_max_floor_by_path", "count_max_floor", "count_max_floor_by_path",
@@ -1937,7 +1933,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         transformers0 = {'ft': ft_none}
         final_tf_dict = transformers0
     elif (setting_params["mode"]=="lgb") :
-        ft = DropFeatureTransformer(drop_columns=["path"])
+        ft = DropFeatureTransformer(drop_columns=["art_series_id"])
         transformers1 = {'ft': ft}
         final_tf_dict = transformers1
 
@@ -2164,18 +2160,18 @@ def main(setting_params):
                             "techniques_pen",
                             "techniques_counterproof",
 
-                            "materials_cardboard", 
+                            #"materials_cardboard", 
                             "materials_chalk",
                             "materials_deck paint",
-                            "materials_gouache (paint)",
+                            #"materials_gouache (paint)",
                             "materials_graphite (mineral)",
                             "materials_ink",
-                            "materials_oil paint (paint)",
-                            "materials_paint (coating)",
+                            #"materials_oil paint (paint)",
+                            #"materials_paint (coating)",
                             "materials_paper",
-                            "materials_parchment (animal material)",
+                            #"materials_parchment (animal material)",
                             "materials_pencil",
-                            "materials_prepared paper",
+                            #"materials_prepared paper",
                             "materials_watercolor (paint)",
                             
                             ] #year_bin50

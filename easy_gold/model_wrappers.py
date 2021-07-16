@@ -1782,16 +1782,16 @@ class LGBWrapper_Base(object):
                 "deal_numpy":False,
                 "first_metric_only": True,
                 
-                'max_depth': 10,
+                'max_depth': 2,
                 #'max_bin': 300,
                 #'bagging_fraction': 0.9,
                 #'bagging_freq': 1, 
                 'colsample_bytree': 0.9,
                 #'colsample_bylevel': 0.3,
                 #'min_data_per_leaf': 2,
-                "min_child_samples":2,
+                "min_child_samples":8,
                 
-                'num_leaves': 300,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
+                'num_leaves': 4,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
                 'lambda_l1': 0.5,
                 'lambda_l2': 0.5,
                 
@@ -1883,8 +1883,8 @@ class LGBWrapper_Base(object):
         self.feature_importances_ = self.model.feature_importances_
         self.best_iteration_ = self.model.best_iteration_
 
-    def predict(self, X_test):
-        return self.model.predict(X_test, num_iteration=self.model.best_iteration_)
+    def predict(self, X_test, oof_flag=True):
+        return self.model.predict(X_test, num_iteration=self.model.best_iteration_).reshape(-1, 1)
     
     def procModelSaving(self, model_dir_name, prefix, bs):
 

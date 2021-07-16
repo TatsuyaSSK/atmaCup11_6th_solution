@@ -122,6 +122,8 @@ def lgb_prepro():
     df_sub = df_sub.rename(columns={"target":"pred_target"})
 
     df_oof["target"] = df_train["target"]
+    df_oof["art_series_id"] = df_train["art_series_id"]
+    df_sub["art_series_id"] = df_test["art_series_id"]
     #df_sub["target"] = df_test["target"]
 
     df_oof.to_pickle(PROC_DIR/"df_proc_train_lgb.pkl")

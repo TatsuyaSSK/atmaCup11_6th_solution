@@ -1135,6 +1135,7 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
     params["fold2"] = setting_params["fold2"]
     params["num_class"] = setting_params["num_class"]
     params["no_wandb"] = setting_params["no_wandb"]
+    params["num_tta"] = setting_params["num_tta"]
 
     params["use_columns"] = use_columns
 
@@ -2300,6 +2301,8 @@ def argParams():
     parser.add_argument('-pred2', '--pred2_only', action="store_true")
     parser.add_argument('-mid_save', '--mid_save', action="store_true")
     parser.add_argument('-permu', '--permutation_feature_flag', action="store_true")
+    parser.add_argument('-tta', '--num_tta', type=int, default=1)
+
 
 
     args=parser.parse_args()

@@ -561,27 +561,34 @@ class PytrochLightningBase():
             #wandb.finish()
 
     def predict(self, X_test, oof_flag=False):
+        
+        num_tta = self.edit_params["num_tta"]
 
         batch_size=self.edit_params["batch_size"] #if oof_flag else 1 #
         dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
-        data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=False)
+        data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=(num_tta>1))
         dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=batch_size, shuffle=False, collate_fn=self.edit_params["collate_fn"],num_workers=self.edit_params["num_workers"])
         
         self.model.oof_prediction = oof_flag
         if self.model.oof_prediction==False:
             self.trainer.logger = None 
 
-        if self.reload_flag:
-            #self.reload_flag=False
-            self.trainer.test(test_dataloaders=dataloader_test, model=self.model)
-        else:
-            
-            self.trainer.test(test_dataloaders=dataloader_test, ckpt_path='best')
-        final_preds = self.model.final_preds
+
+        tta_list = []
+        for tta_i in range(num_tta):
+            print(f"tta : {tta_i+1}th")
+            if self.reload_flag:
+                #self.reload_flag=False
+                self.trainer.test(test_dataloaders=dataloader_test, model=self.model)
+            else:
+                
+                self.trainer.test(test_dataloaders=dataloader_test, ckpt_path='best')
+            final_preds = self.model.final_preds
+            tta_list.append(final_preds)
 
         #pdb.set_trace()
 
-        return final_preds
+        return np.array(tta_list).mean(axis=0)
 
     def procModelSaving(self, model_dir_name, prefix, bs):
 

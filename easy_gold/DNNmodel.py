@@ -13,6 +13,9 @@ from torchvision import transforms as T
 from torchvision.models import resnet34, resnet18, vgg16
 from PIL import Image
 import timm
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from sklearn import random_projection
 
 
 #from torch_geometric.nn import GCNConv, AGNNConv, ChebConv, NNConv, DeepGCNLayer
@@ -35,6 +38,9 @@ def set_seed_torch(seed):
 
 set_seed_torch(SEED_NUMBER)
 
+
+IMG_MEAN = [0.485, 0.456, 0.406]
+IMG_STD = [0.229, 0.224, 0.225]
 
 def mse_loss(input, target):
     return torch.mean((input - target) ** 2)
@@ -305,21 +311,158 @@ class MCRMSELoss(nn.Module):
 
         return total_score
         
-    
+class SupConLoss(nn.Module):
+    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
+    It also supports the unsupervised contrastive loss in SimCLR"""
+    def __init__(self, temperature=0.07, contrast_mode='all',
+                 base_temperature=0.07):
+        super(SupConLoss, self).__init__()
+        self.temperature = temperature
+        self.contrast_mode = contrast_mode
+        self.base_temperature = base_temperature
+
+    def forward(self, features, labels=None, mask=None):
+        """Compute loss for model. If both `labels` and `mask` are None,
+        it degenerates to SimCLR unsupervised loss:
+        https://arxiv.org/pdf/2002.05709.pdf
+        Args:
+            features: hidden vector of shape [bsz, n_views, ...].
+            labels: ground truth of shape [bsz].
+            mask: contrastive mask of shape [bsz, bsz], mask_{i,j}=1 if sample j
+                has the same class as sample i. Can be asymmetric.
+        Returns:
+            A loss scalar.
+        """
+        device = (torch.device('cuda')
+                  if features.is_cuda
+                  else torch.device('cpu'))
+
+        if len(features.shape) < 3:
+            raise ValueError('`features` needs to be [bsz, n_views, ...],'
+                             'at least 3 dimensions are required')
+        if len(features.shape) > 3:
+            features = features.view(features.shape[0], features.shape[1], -1)
+
+        batch_size = features.shape[0]
+        if labels is not None and mask is not None:
+            raise ValueError('Cannot define both `labels` and `mask`')
+        elif labels is None and mask is None:
+            mask = torch.eye(batch_size, dtype=torch.float32).to(device)
+        elif labels is not None:
+            labels = labels.contiguous().view(-1, 1)
+            if labels.shape[0] != batch_size:
+                raise ValueError('Num of labels does not match num of features')
+            mask = torch.eq(labels, labels.T).float().to(device)
+        else:
+            mask = mask.float().to(device)
+
+        contrast_count = features.shape[1]
+        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
+        if self.contrast_mode == 'one':
+            anchor_feature = features[:, 0]
+            anchor_count = 1
+        elif self.contrast_mode == 'all':
+            anchor_feature = contrast_feature
+            anchor_count = contrast_count
+        else:
+            raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
+
+        # compute logits
+        anchor_dot_contrast = torch.div(
+            torch.matmul(anchor_feature, contrast_feature.T),
+            self.temperature)
+        # for numerical stability
+        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
+        logits = anchor_dot_contrast - logits_max.detach()
+
+        # tile mask
+        mask = mask.repeat(anchor_count, contrast_count)
+        # mask-out self-contrast cases
+        logits_mask = torch.scatter(
+            torch.ones_like(mask),
+            1,
+            torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
+            0
+        )
+        mask = mask * logits_mask
+
+        # compute log_prob
+        exp_logits = torch.exp(logits) * logits_mask
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+
+        # compute mean of log-likelihood over positive
+        mean_log_prob_pos = (mask * log_prob).sum(1) / mask.sum(1)
+
+        # loss
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        loss = loss.view(anchor_count, batch_size).mean()
+
+        return loss
+
+
+
+
+class SupConDataset(torch.utils.data.Dataset):
+    def __init__(
+        self, df_train_X, df_train_y, dataset_params, train_flag
+    ):
+        self.df_train_X = df_train_X
+        self.df_train_y = df_train_y
+        #self.transform = dataset_params["transform"]
+        self.img_size = dataset_params["img_size"]
+        self.train_flag = train_flag
+        
+        if train_flag:
+            comp_list = [
+                            A.Resize(p=1.0, height=self.img_size, width=self.img_size),
+                            A.RandomResizedCrop(p=1.0, height=self.img_size, width=self.img_size, scale=(0.5, 1.0)),
+                            A.HorizontalFlip(p=0.5),
+                            A.VerticalFlip(p=0.5),
+                            A.HueSaturationValue(p=0.8),
+                            A.ToGray(p=0.2),
+                            A.Normalize(mean=IMG_MEAN, std=IMG_STD),
+                            ToTensorV2(always_apply=True),
+                            ]
+        else:
+            comp_list = [A.Resize(p=1.0, height=self.img_size, width=self.img_size),
+                         A.Normalize(mean=IMG_MEAN, std=IMG_STD),
+                        ToTensorV2(always_apply=True),
+            
+            ]
+        self.transform = A.Compose(comp_list)
+
+    def __len__(self):
+        return self.df_train_X.shape[0]
+
+    def __getitem__(self, idx):
+        
+        image_name = self.df_train_X.iloc[idx]['image_name']
+        ppath_to_img = INPUT_DIR/f"photos/{image_name}"
+        img = Image.open(ppath_to_img)
+        img = np.array(img)
+        img_1 = self.transform(image=img)["image"]
+        img_2 = self.transform(image=img)["image"]
+        #img = [img_1, img_2]
+        
+        w = self.df_train_X.iloc[idx]['loss_weight']
+        
+        return [img_1, img_2, w], self.df_train_y.iloc[idx].values#[0]
+
+
+
 class MyDatasetResNet(torch.utils.data.Dataset):
 
     def __init__(self, df_train_X, df_train_y, dataset_params, train_flag):
         
         self.df_train_X = df_train_X
         self.df_train_y = df_train_y
+        self.img_size = dataset_params["img_size"]
         
-        IMG_MEAN = [0.485, 0.456, 0.406]
-        IMG_STD = [0.229, 0.224, 0.225]
 
         
         #size = (224, 224)
         #size = (300, 300)
-        size = (512, 512)
+        size = (self.img_size, self.img_size)
         additional_items = (
             [T.Resize(size)]
             if not train_flag
@@ -357,54 +500,6 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         return [img, w], self.df_train_y.iloc[idx].values#[0]
 
 
-# class MyDatasetMultiLabel(torch.utils.data.Dataset):
-
-#     def __init__(self, df_train_X, df_train_y, dataset_params, train_flag):
-        
-#         self.df_train_X = df_train_X
-#         self.df_train_y = df_train_y
-        
-#         IMG_MEAN = [0.485, 0.456, 0.406]
-#         IMG_STD = [0.229, 0.224, 0.225]
-
-        
-#         #size = (224, 224)
-#         size = (300, 300)
-#         additional_items = (
-#             [T.Resize(size)]
-#             if not train_flag
-#             else [
-#                 #T.RandomGrayscale(p=0.2),
-#                 T.RandomVerticalFlip(),
-#                 T.RandomHorizontalFlip(),
-#                 # T.ColorJitter(
-#                 #     brightness=0.3,
-#                 #     contrast=0.5,
-#                 #     saturation=[0.8, 1.3],
-#                 #     hue=[-0.05, 0.05],
-#                 # ),
-#                 T.RandomResizedCrop(size),
-#                 T.Resize(size),
-#             ]
-#         )
-
-#         self.transformer = T.Compose(
-#             [*additional_items, T.ToTensor(), T.Normalize(mean=IMG_MEAN, std=IMG_STD)]
-#         )
-        
-#     def __len__(self):
-#         return self.df_train_X.shape[0]
-
-#     def __getitem__(self, idx):
-        
-#         image_name = self.df_train_X.iloc[idx]['image_name']
-#         ppath_to_img = INPUT_DIR/f"photos/{image_name}"
-#         img = Image.open(ppath_to_img)
-#         img = self.transformer(img)
-
-#         w = self.df_train_X.iloc[idx]['loss_weight']
-        
-#         return [img, w], self.df_train_y.iloc[idx].values[0]
 class SequenceTransformer(object):
     def __init__(self):
         pass
@@ -915,6 +1010,138 @@ class PytorchLightningModelBase(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         return optimizer
     
+
+class SupConModel(PytorchLightningModelBase):
+
+    def __init__(
+        self, base_name: str, pretrained=False,
+        in_channels: int=3, feat_dim: int=128
+    ):
+
+        self.dummy_eval_num = 0
+
+        """Initialize"""
+        self.base_name = base_name
+        super(SupConModel, self).__init__()
+
+        # # prepare backbone
+        if hasattr(timm.models, base_name):
+            base_model = timm.create_model(
+                base_name, num_classes=0, pretrained=pretrained, in_chans=in_channels)
+            in_features = base_model.num_features
+            print("load imagenet pretrained:", pretrained)
+        else:
+            raise NotImplementedError
+
+        self.backbone = base_model
+        print(self.backbone)
+        print(f"{base_name}: {in_features}")
+        #pdb.set_trace()
+
+        # 参考
+        # https://github.com/HobbitLong/SupContrast/blob/8d0963a7dbb1cd28accb067f5144d61f18a77588/networks/resnet_big.py#L174
+        self.head = nn.Sequential(
+                nn.Linear(in_features, in_features),
+                nn.ReLU(inplace=True),
+                nn.Linear(in_features, feat_dim)
+            )
+
+    def _forward(self, batch):
+        
+     
+        img1 =  batch[0][0]
+        img2 =  batch[0][1]
+        images = torch.cat([img1, img2], dim=0)
+        
+        feat = self.backbone(images)
+        feat = F.normalize(self.head(feat), dim=1)
+
+        return feat
+
+    def _forward_test(self, batch):
+        img1 =  batch[0][0]
+        feat = self.backbone(img1)
+        feat = feat.squeeze()
+        #
+        projection = random_projection.GaussianRandomProjection(n_components=1)
+        out = projection.fit_transform(feat.cpu())
+        out = torch.tensor(out, device=img1.device)
+        #pdb.set_trace()
+
+        return out
+
+    def criterion(self, y_true, y_pred, weight=None):
+
+        bsz = y_true.shape[0]
+
+        #pdb.set_trace()
+
+        f1, f2 = torch.split(y_pred, [bsz, bsz], dim=0)
+        features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
+        loss = SupConLoss()(features, y_true)
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        
+        out = self._forward(batch)
+
+        #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
+
+        def my_eval_dummy(y_pred, y_true):
+            self.dummy_eval_num+=1
+            return self.dummy_eval_num
+        eval_metric_func_dict= {"eval_dummy":my_eval_dummy}
+
+        train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=eval_metric_func_dict)
+        
+
+
+        
+        self.log('loss', loss, logger=False)
+        ret = {'loss': loss}
+
+        for k, v in train_batch_eval_score_dict.items():
+            self.log(f"train_{k}", v, logger=False)
+            ret[f"{k}"] = v
+
+        return ret
+
+
+
+    def validation_step(self, batch, batch_idx):
+
+        out = self._forward(batch)
+
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
+
+        def my_eval_dummy(y_pred, y_true):
+            self.dummy_eval_num+=1
+            return self.dummy_eval_num
+        eval_metric_func_dict= {"eval_dummy":my_eval_dummy}
+
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=eval_metric_func_dict)
+        
+
+
+        self.log('val_loss', loss, logger=False)
+        ret = {'val_loss': loss}
+
+        for k, v in val_batch_eval_score_dict.items():
+            self.log(f"val_{k}", v, logger=False)
+            ret[f"{k}"] = v
+        
+
+        #self.log('val_loss', loss)
+
+
+        return ret
+
+    def test_step(self, batch, batch_idx):
+        out = self._forward_test(batch)
+        #pdb.set_trace()
+        return {'out': out}
 
 class myMultilabelNet(PytorchLightningModelBase):
     def __init__(self, num_out, regression_flag=True, tech_weight=None, material_weight=None) -> None:

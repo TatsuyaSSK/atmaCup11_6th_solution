@@ -31,18 +31,20 @@ def copyImg():
         ppath_to_image = ppath_to_dir / row["image_name"]
         
         
-        pp_dir = ppath_to_dir / f"train/{target_num}"
-        os.makedirs(pp_dir, exist_ok=True)
+        # pp_dir = ppath_to_dir / f"train/{target_num}"
+        # os.makedirs(pp_dir, exist_ok=True)
         
         
-        new_pp = pp_dir / row["image_name"]
-        shutil.copy(ppath_to_image, new_pp)
+        # new_pp = pp_dir / row["image_name"]
+        # shutil.copy(ppath_to_image, new_pp)
 
         pp_dir = ppath_to_dir / f"train_salient/{target_num}"
         os.makedirs(pp_dir, exist_ok=True)
+        new_pp = pp_dir / row["image_name"]
 
         salient_img = getSaliencyImg(str(ppath_to_image), salient_type="SR")
-        pdb.set_trace()
+        cv2.imwrite(str(new_pp), salient_img)
+        #pdb.set_trace()
         
     for index, row in df_test.iterrows():
         

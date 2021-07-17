@@ -528,6 +528,12 @@ class PytrochLightningBase():
                                 save_weights_only=True,
                                 )
 
+        # callbacks_list = []
+        # if params['early_stopping_rounds'] > 0:
+        #     callbacks_list = [early_stop_callback, checkpoint_callback]
+
+                                
+
         self.trainer = pl.Trainer(
                         num_sanity_val_steps=0,
                         gpus=self.initial_params["use_gpu"], 
@@ -657,6 +663,18 @@ class PytrochLightningBase():
         self.reload_flag = True
 
         return 0
+
+class SSL_Wrapper(PytrochLightningBase):
+    def __init__(self, img_size, num_out, regression_flag):
+        
+        super().__init__()
+        
+        self.initial_params["dataset_class"] = SupConDataset
+        self.initial_params["collate_fn"] = None #collate_fn_Transformer
+
+        self.initial_params["dataset_params"] = {"img_size":img_size}
+        
+        self.model = SupConModel(base_name="efficientnet_b1") #num_out=num_out, regression_flag=regression_flag)
 
 class ResNet_Wrapper(PytrochLightningBase):
     def __init__(self, num_out, regression_flag):

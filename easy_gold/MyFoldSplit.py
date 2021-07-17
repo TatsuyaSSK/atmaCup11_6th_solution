@@ -57,7 +57,7 @@ def stratified_group_k_fold(X, y, groups, k, seed=2021):
 
 class StratifiedKFoldWithGroupID():
 
-    def __init__(self, group_id_col, stratified_target_id, n_splits, random_state=None, *args, **kwargs):
+    def __init__(self, group_id_col, stratified_target_id, n_splits, random_state=2021, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.group_id_col = group_id_col
@@ -81,6 +81,7 @@ class StratifiedKFoldWithGroupID():
             
             print(f"fold train :{df.iloc[train_idx]['group_target'].value_counts()}")
             print(f"fold valid :{df.iloc[test_idx]['group_target'].value_counts()}")
+            #pdb.set_trace()
 
             yield train_idx, test_idx
 

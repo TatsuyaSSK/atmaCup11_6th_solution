@@ -986,7 +986,7 @@ class myMultilabelNet(PytorchLightningModelBase):
         loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
         #loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
 
-        return loss_target +  loss_tech #+ loss_material
+        return loss_target +  loss_tech #+ loss_material /3.0
 
     def training_step(self, batch, batch_idx):
         

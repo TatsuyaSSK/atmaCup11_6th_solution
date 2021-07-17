@@ -7,6 +7,7 @@ Created on Sat Jul 10 02:41:05 2021
 
 from utils import *
 from PIL import Image
+import cv2
 
 def getImageStatistics(df, ppath_to_dir, ppath_to_label_dir=None):
 
@@ -78,3 +79,21 @@ def getImageStatistics(df, ppath_to_dir, ppath_to_label_dir=None):
         
 
     return df
+
+
+def getSaliencyImg(path_to_image, salient_type="SR"):
+
+    img = cv2.imread(path_to_image)
+
+    if salient_type == 'SR':
+        saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+    elif salient_type == 'FG':
+        saliency = cv2.saliency.StaticSaliencyFineGrained_create()
+
+
+    (success, saliencyMap) = saliency.computeSaliency(img)
+    saliencyMap = (saliencyMap * 255).astype("uint8")
+
+
+    return saliencyMap
+    

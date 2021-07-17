@@ -1758,7 +1758,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             eval_metric_name = 'rmse'
             eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
             eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
-            eval_metric_func_dict["mean_f1_material"] = eval_multi_material
+            #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
 
 
 
@@ -2194,19 +2194,19 @@ def main(setting_params):
                             "techniques_pen",
                             "techniques_counterproof",
 
-                            "materials_cardboard",  #
-                            "materials_chalk",
-                            "materials_deck paint",
-                            "materials_gouache (paint)", #
-                            "materials_graphite (mineral)",
-                            "materials_ink",
-                            "materials_oil paint (paint)", #
-                            "materials_paint (coating)",#
-                            "materials_paper",
-                            "materials_parchment (animal material)",#
-                            "materials_pencil",
-                            "materials_prepared paper",#
-                            "materials_watercolor (paint)",
+                            # #"materials_cardboard",  #
+                            # "materials_chalk",
+                            # "materials_deck paint",
+                            # #"materials_gouache (paint)", #
+                            # "materials_graphite (mineral)",
+                            # "materials_ink",
+                            # #"materials_oil paint (paint)", #
+                            # #"materials_paint (coating)",#
+                            # "materials_paper",
+                            # #"materials_parchment (animal material)",#
+                            # "materials_pencil",
+                            # #"materials_prepared paper",#
+                            # "materials_watercolor (paint)",
                             
                             ] #year_bin50
             setting_params["num_class"] = len(target_cols)

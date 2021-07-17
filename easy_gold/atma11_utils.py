@@ -13,16 +13,18 @@ import pandas as pd
 from datetime import datetime
 import inspect
 from matplotlib_venn import venn2
-
 from utils import *
+from image_utils import *
+
+
 
 def copyImg():
     
     ppath_to_dir = INPUT_DIR/"photos"
     
-    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train.pkl')
+    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
     #print(f"load df_train : {df_train.shape}")
-    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test.pkl')
+    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test_nn.pkl')
     
     for index, row in df_train.iterrows():
         target_num = row["target"]
@@ -35,6 +37,12 @@ def copyImg():
         
         new_pp = pp_dir / row["image_name"]
         shutil.copy(ppath_to_image, new_pp)
+
+        pp_dir = ppath_to_dir / f"train_salient/{target_num}"
+        os.makedirs(pp_dir, exist_ok=True)
+
+        salient_img = getSaliencyImg(str(ppath_to_image), salient_type="SR")
+        pdb.set_trace()
         
     for index, row in df_test.iterrows():
         
@@ -56,14 +64,17 @@ def drop_art_series(df_train):
         
 def sub_round():
 
-    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train.pkl')
-    df_oof = pd.read_csv(OUTPUT_DIR/"20210713_030317_ResNet_Wrapper--0.800492--_oof.csv", index_col="object_id") 
-    df_sub = pd.read_csv(OUTPUT_DIR/"20210713_030317_ResNet_Wrapper--0.800492--_submission.csv")
+    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
+    df_train = drop_art_series(df_train)
+    file_prefix = "20210715-202758_20210716_161903_multiLabelNet--0.523242--"
+    df_oof = pd.read_csv(OUTPUT_DIR/f"{file_prefix}_oof.csv", index_col="object_id") 
+    df_sub = pd.read_csv(OUTPUT_DIR/f"{file_prefix}_submission.csv")
     print(df_sub.describe())
 
-    #pdb.set_trace()
+    pdb.set_trace()
     df_train["oof"] =  df_oof["target"]
     print(df_train["oof"].describe())
+
     from sklearn.metrics import mean_squared_error
     def my_eval(y_pred, y_true):
 
@@ -102,12 +113,13 @@ def sub_round():
     print(th_list)
 
     df_sub["target"] = df_sub["target"].map(lambda x: 0 if x < th_list[0] else (1 if x < th_list[1] else (2 if x < th_list[2] else 3)))
-    df_sub.to_csv(OUTPUT_DIR/"20210713_030317_ResNet_Wrapper--0.800492--_submission_round.csv", index=False)
+    df_sub.to_csv(OUTPUT_DIR/f"{file_prefix}_submission_round.csv", index=False)
     
 
 def lgb_prepro():
 
     df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
+    df_train = drop_art_series(df_train)
     df_test = pd.read_pickle(PROC_DIR / f'df_proc_test_nn.pkl')
 
     sub_name = "20210715_181909_multiLabelNet--0.850927--"
@@ -131,4 +143,4 @@ def lgb_prepro():
         
 if __name__ == '__main__':
     
-    lgb_prepro()
+    copyImg()

@@ -563,6 +563,7 @@ class PytrochLightningBase():
     def predict(self, X_test, oof_flag=False):
         
         num_tta = self.edit_params["num_tta"]
+        
 
         batch_size=self.edit_params["batch_size"] #if oof_flag else 1 #
         dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
@@ -578,7 +579,7 @@ class PytrochLightningBase():
         for tta_i in range(num_tta):
             print(f"tta : {tta_i+1}th")
             if self.reload_flag:
-                #self.reload_flag=False
+                
                 self.trainer.test(test_dataloaders=dataloader_test, model=self.model)
             else:
                 

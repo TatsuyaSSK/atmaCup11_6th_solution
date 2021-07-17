@@ -1752,11 +1752,11 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             
 
         if setting_params["num_class"] == 1:
-            #eval_metric_name = 'rmse'
-            #eval_metric_func_dict= {eval_metric_name:my_eval}
+            eval_metric_name = 'rmse'
+            eval_metric_func_dict= {eval_metric_name:my_eval}
 
-            eval_metric_name = "val_loss"
-            eval_metric_func_dict = {}
+            #eval_metric_name = "val_loss"
+            #eval_metric_func_dict = {}
 
         elif setting_params["num_class"] >= 4:
             eval_metric_name = 'rmse'
@@ -2051,9 +2051,9 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
         #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        #model_wrapper = multiLabelNet(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
-        #                            tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
+        #model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
+        model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
+                                    tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
         
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2195,9 +2195,9 @@ def main(setting_params):
     
         if setting_params["type"]=="regression":
             target_cols= ["target", 
-                            #"techniques_brush",
-                            #"techniques_pen",
-                            #"techniques_counterproof",
+                            "techniques_brush",
+                            "techniques_pen",
+                            "techniques_counterproof",
 
                             # #"materials_cardboard",  #
                             # "materials_chalk",

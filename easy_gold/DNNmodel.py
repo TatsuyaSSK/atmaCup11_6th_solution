@@ -1144,7 +1144,11 @@ class SupConModel(PytorchLightningModelBase):
         return {'out': out}
 
 class myMultilabelNet(PytorchLightningModelBase):
-    def __init__(self, num_out, regression_flag=True, tech_weight=None, material_weight=None) -> None:
+    def __init__(self, base_name: str, pretrained=False,
+                in_channels: int=3, num_out=1, 
+                regression_flag=True, 
+                tech_weight=None, material_weight=None) -> None:
+
         super().__init__()
         
         self.regression_flag=regression_flag
@@ -1154,14 +1158,31 @@ class myMultilabelNet(PytorchLightningModelBase):
         self.material_weight = material_weight
 
 
-        self.model = timm.create_model('efficientnet_b1', pretrained=False)
-        self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
+        # # prepare backbone
+        if hasattr(timm.models, base_name):
+            base_model = timm.create_model(
+                base_name, num_classes=0, pretrained=False, in_chans=in_channels)
+            in_features = base_model.num_features
+            print("load imagenet pretrained:", pretrained)
+        else:
+            raise NotImplementedError
 
-        # self.fc_reg = nn.Linear(in_features=640, out_features=1, bias=True)
-        # self.fc_tech = nn.Linear(in_features=640, out_features=3, bias=True)
-        # self.fc_material = nn.Linear(in_features=640, out_features=num_out-4, bias=True)
+        self.backbone = base_model
+        print(self.backbone)
+        print(f"{base_name}: {in_features}")
 
+        ppath_to_model=PATH_TO_MODEL_DIR/"20210717-103724/model__fold_0__iter_91__20210717-103724__SSL_Wrapper.pkl"
+        tmp_dict = torch.load(str(ppath_to_model))
+        backbone_dict = {k.replace("backbone.", ""):v for k, v in tmp_dict.items() if "backbone" in k }
+        self.backbone.load_state_dict(backbone_dict)
+        
 
+        self.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
+
+        #self.model = timm.create_model('efficientnet_b1', pretrained=False)
+        #self.model.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
+
+     
         #print(self.model)
         #pdb.set_trace()
 
@@ -1170,7 +1191,8 @@ class myMultilabelNet(PytorchLightningModelBase):
      
         img =  batch[0][0]
         #print(f"img : {img.shape}")
-        out = self.model(img)
+        out = self.backbone(img)
+        out = self.classifier(out)
 
         #out_target = self.fc_reg(out)
         #out_tech = self.fc_tech(out)
@@ -1217,7 +1239,7 @@ class myMultilabelNet(PytorchLightningModelBase):
 
     def training_step(self, batch, batch_idx):
         
-        out = self._forward(batch)
+        out = self.forward(batch)
 
         #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
         loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
@@ -1247,7 +1269,7 @@ class myMultilabelNet(PytorchLightningModelBase):
 
     def validation_step(self, batch, batch_idx):
 
-        out = self._forward(batch)
+        out = self.forward(batch)
 
         loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
 
@@ -1274,7 +1296,7 @@ class myMultilabelNet(PytorchLightningModelBase):
         return ret
 
     def test_step(self, batch, batch_idx):
-        out = self._forward(batch)
+        out = self.forward(batch)
         out_target = out[:, 0]
         out_tech = torch.sigmoid(out[:, 1:])
         #pdb.set_trace()

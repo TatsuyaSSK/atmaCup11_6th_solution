@@ -677,30 +677,32 @@ class SSL_Wrapper(PytrochLightningBase):
         self.model = SupConModel(base_name="efficientnet_b1") #num_out=num_out, regression_flag=regression_flag)
 
 class ResNet_Wrapper(PytrochLightningBase):
-    def __init__(self, num_out, regression_flag):
+    def __init__(self, img_size, num_out, regression_flag):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {}
+        self.initial_params["dataset_params"] =  {"img_size":img_size}
         
         self.model = myResNet(num_out=num_out, regression_flag=regression_flag)
 
 
 class multiLabelNet(PytrochLightningBase):
-    def __init__(self, num_out, regression_flag, tech_weight, material_weight):
+    def __init__(self, img_size, num_out, regression_flag, tech_weight, material_weight):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {}
+        self.initial_params["dataset_params"] = {"img_size":img_size}
         
-        self.model = myMultilabelNet(num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        self.model = myMultilabelNet(base_name="efficientnet_b1", num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
+
+        
 class LastQueryTransformer_Wrapper(PytrochLightningBase):
     def __init__(self,
                 #f_all, 

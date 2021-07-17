@@ -1074,13 +1074,21 @@ class SupConModel(PytorchLightningModelBase):
 
         bsz = y_true.shape[0]
 
-        #pdb.set_trace()
+        
 
         f1, f2 = torch.split(y_pred, [bsz, bsz], dim=0)
         features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
-        loss = SupConLoss()(features, y_true)
 
-        return loss
+        #pdb.set_trace()
+
+        num_y = y_true.shape[1]
+
+        total_loss = 0.0
+        for i in range(num_y):
+            loss = SupConLoss()(features, y_true[:, i])
+            total_loss += loss
+
+        return total_loss
 
     def training_step(self, batch, batch_idx):
         
@@ -1171,7 +1179,8 @@ class myMultilabelNet(PytorchLightningModelBase):
         print(self.backbone)
         print(f"{base_name}: {in_features}")
 
-        ppath_to_model=PATH_TO_MODEL_DIR/"20210717-103724/model__fold_0__iter_91__20210717-103724__SSL_Wrapper.pkl"
+        #ppath_to_model=PATH_TO_MODEL_DIR/"20210717-103724/model__fold_0__iter_91__20210717-103724__SSL_Wrapper.pkl"
+        ppath_to_model=PATH_TO_MODEL_DIR/"20210717-143003/model__fold_0__iter_98__20210717-143003__SSL_Wrapper.pkl"
         tmp_dict = torch.load(str(ppath_to_model))
         backbone_dict = {k.replace("backbone.", ""):v for k, v in tmp_dict.items() if "backbone" in k }
         self.backbone.load_state_dict(backbone_dict)
@@ -1185,6 +1194,9 @@ class myMultilabelNet(PytorchLightningModelBase):
      
         #print(self.model)
         #pdb.set_trace()
+
+    #def loadBackbone(self, ):
+
 
     def _forward(self, batch):
         
@@ -1211,6 +1223,8 @@ class myMultilabelNet(PytorchLightningModelBase):
     def forward(self, batch):
         out = self._forward(batch)
         return out
+
+
 
     def criterion(self, y_true, y_pred, weight=None):
 
@@ -1304,6 +1318,19 @@ class myMultilabelNet(PytorchLightningModelBase):
 
         #pdb.set_trace()
         return {'out': out}
+
+
+    def setParams(self, _params):
+
+        self.learning_rate = _params["learning_rate"]
+        self.eval_metric_func_dict = _params["eval_metric_func_dict__"]
+        self.monitor=_params["eval_metric"]
+        self.mode=_params['eval_max_or_min']
+
+        self.last_score = -10000000000 if self.mode == "max" else 10000000000
+
+        print("show eval metrics : ")
+        print(self.eval_metric_func_dict)
 
 class myResNet(PytorchLightningModelBase):
     def __init__(self, num_out, regression_flag=True) -> None:

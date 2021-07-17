@@ -1752,17 +1752,20 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             
 
         if setting_params["num_class"] == 1:
-            eval_metric_name = 'rmse'
-            eval_metric_func_dict= {eval_metric_name:my_eval}
+            #eval_metric_name = 'rmse'
+            #eval_metric_func_dict= {eval_metric_name:my_eval}
 
-            #eval_metric_name = "val_loss"
-            #eval_metric_func_dict = {}
+            eval_metric_name = "val_loss"
+            eval_metric_func_dict = {}
 
         elif setting_params["num_class"] >= 4:
             eval_metric_name = 'rmse'
             eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
             eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
             #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
+
+            #eval_metric_name = "val_loss"
+            #eval_metric_func_dict = {}
 
 
 

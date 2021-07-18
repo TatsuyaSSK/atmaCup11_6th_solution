@@ -1577,6 +1577,19 @@ def TestReduceALL():
     x = np.array([[[0, 0, 0], [1, 0, 3], [2, 2, 2]], [[0, 0, 0], [0, 0, 0], [1, 0, 3]]])
 
     pdb.set_trace()
+
+
+def searchCheckptFile(ppath_to_save_dir, ppath_to_model, prefix):
+
+    model_name = ppath_to_model.stem.split("__")[-1]
+
+    fold_num = int(prefix.replace("fold_", ""))
+    ckpt_name = f"{model_name}_train_model.ckpt"
+    if fold_num > 0:
+        ckpt_name = ckpt_name.replace(".ckpt", f"-v{fold_num}.ckpt")
+    #multiLabelNet_train_model-v4.ckpt
+
+    return ppath_to_save_dir/ckpt_name
     
 if __name__ == '__main__':
     TestReduceALL()

@@ -548,6 +548,7 @@ class PytrochLightningBase():
 
         # if X_valid is not None:
         #     print(checkpoint_callback.best_model_path)
+        #     pdb.set_trace()
         #     self.model.load_state_dict(torch.load(checkpoint_callback.best_model_path), strict=False) #self.model.load_from_checkpoint(checkpoint_path=checkpoint_callback.best_model_path)
         #     #self.model.load_state_dict(torch.load(str(params["path_to_model"])+".ckpt"))
         # else:
@@ -632,9 +633,12 @@ class PytrochLightningBase():
             return -1
         ppath_to_model = name_list[0]
 
-
-        self.model.load_state_dict(torch.load(str(ppath_to_model)))
-        print(f'Trained nn model was loaded! : {ppath_to_model}')
+        ppath_to_ckpt_model = searchCheckptFile(ppath_to_save_dir, ppath_to_model, prefix)
+        
+        #pdb.set_trace()
+        self.model.load_state_dict(torch.load(str(ppath_to_ckpt_model))["state_dict"])
+        #self.model.load_state_dict(torch.load(str(ppath_to_model)))
+        print(f'Trained nn model was loaded! : {ppath_to_ckpt_model}')
         
         a = int(re.findall('iter_(\d+)__', str(ppath_to_model))[0])
         

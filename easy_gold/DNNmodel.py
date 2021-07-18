@@ -581,13 +581,18 @@ class myMultilabelNet(PytorchLightningModelBase):
             return -1
         ppath_to_model = name_list[0]
 
+        prefix=f"fold_{fold_num}"
+        ppath_to_ckpt_model = searchCheckptFile(ppath_to_backbone_dir, ppath_to_model, prefix)
+
         #ppath_to_model=PATH_TO_MODEL_DIR/"20210717-103724/model__fold_0__iter_91__20210717-103724__SSL_Wrapper.pkl"
         #ppath_to_model= ppath_to_backbone_dir /PATH_TO_MODEL_DIR/"20210717-143003/model__fold_0__iter_98__20210717-143003__SSL_Wrapper.pkl"
-        tmp_dict = torch.load(str(ppath_to_model))
+        #tmp_dict = torch.load(str(ppath_to_model))
+        tmp_dict = torch.load(str(ppath_to_ckpt_model))["state_dict"]
         backbone_dict = {k.replace("backbone.", ""):v for k, v in tmp_dict.items() if "backbone" in k }
         self.backbone.load_state_dict(backbone_dict)
 
-        print(f"load backbone : {ppath_to_model}")
+        print(f"load backbone : {ppath_to_ckpt_model}")
+        #pdb.set_trace()
 
 
     def _forward(self, batch):

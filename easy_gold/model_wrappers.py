@@ -140,7 +140,11 @@ class Averaging_Wrapper(object):
             pred_f_name = oof_f_name.replace("oof", "submission")
             print(pred_f_name)
             
-            df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col]
+            #for atam11, commentout!
+            if PROJECT_NAME == "atma11":
+                df_pred = pd.read_csv(str(f.parent/pred_f_name))[self.target_col]
+            else:
+                df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col]
             
             print(f"df_pred : {df_pred}")
             y_pred_list.append(df_pred)
@@ -221,7 +225,7 @@ class Averaging_Wrapper(object):
         
         self.setFeatureImportance(X_train.columns)
 
-    def predict(self, X_test):
+    def predict(self, X_test, oof_flag=True):
         
         if self.rate_list_ == None:
             print(f"X_test : {X_test}")
@@ -231,7 +235,7 @@ class Averaging_Wrapper(object):
             pred = np.zeros(len(X_test))
             for c, r in zip(X_test.columns, self.rate_list_):
                 pred += (X_test[c] * r).values
-            return pred
+            return pred.reshape(-1, 1)
 
     def setFeatureImportance(self, columns_list):
         self.feature_importances_ = np.zeros(len(columns_list))
@@ -678,7 +682,7 @@ class SSL_Wrapper(PytrochLightningBase):
 
         self.initial_params["dataset_params"] = {"img_size":img_size}
         
-        self.model = SupConModel(base_name="efficientnet_b1") #num_out=num_out, regression_flag=regression_flag)
+        self.model = SupConModel(base_name="vit_small_patch16_384") #num_out=num_out, regression_flag=regression_flag)
 
 class ResNet_Wrapper(PytrochLightningBase):
     def __init__(self, img_size, num_out, regression_flag):

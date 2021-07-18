@@ -13,7 +13,7 @@ from datetime import datetime
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score, log_loss
-
+from sklearn.metrics import mean_squared_error
 
 
 from utils import *
@@ -1575,8 +1575,10 @@ def calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, 
 
     if PROJECT_NAME == "atma11":
         
+
+
         df_oof = df_oof.reindex(df_train.index)
-        y_true = df_train[["target"]].values * 3
+        y_true = df_train[["target"]].values * 3 if setting_params["mode"] != "ave" else df_train[["target"]].values
         y_oof_pred = df_oof[["target"]].values
         
         from sklearn.metrics import mean_squared_error
@@ -1594,7 +1596,7 @@ def calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, 
             slack.notify(text=print_text)
 
 
-        df_train["target"] = df_train["target"].values * 3.0
+        df_train["target"] = df_train["target"].values * 3.0 if setting_params["mode"] != "ave" else df_train["target"].values
         myEA = ErrorAnalysis(_df_train=df_train, _df_test=df_test, 
                             _index_col=df_train.index.name, _target_col_list=setting_params["target"], 
                             _prefix=setting_params['model_dir_name'])
@@ -1682,18 +1684,12 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
         
-        
-    
-        
         def my_eval(y_pred, y_true):
-            
-            preds = []
-            for i in y_pred:
-                preds.append([1-i, i])
-
-            return log_loss(y_true, preds)
         
-        eval_metric_name = 'binary_logloss'
+            return np.sqrt(mean_squared_error(y_true, y_pred))
+        
+
+        eval_metric_name = 'rmse'
         eval_metric_func_dict= {eval_metric_name:my_eval}
 
     elif (setting_params["mode"]=="lgb"):
@@ -1737,7 +1733,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         #     intermediate = np.sqrt(np.power(diff_x, 2) + np.power(diff_y, 2))# + 15 * np.abs(fhat-f)
         #     return intermediate.sum()/xhat.shape[0]
         
-        from sklearn.metrics import mean_squared_error
+        
         def my_eval(y_pred, y_true):
 
             if setting_params["type"]=="regression":
@@ -1805,13 +1801,13 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             #eval_metric_func_dict = {}
 
         elif setting_params["num_class"] >= 4:
-            eval_metric_name = 'rmse'
-            eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
-            eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
+            #eval_metric_name = 'rmse'
+            #eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
+            #eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
             #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
 
-            #eval_metric_name = "val_loss"
-            #eval_metric_func_dict = {}
+            eval_metric_name = "val_loss"
+            eval_metric_func_dict = {}
 
 
 
@@ -2100,9 +2096,9 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
         #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        #model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
-                                    tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
+        model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
+        #model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
+        #                            tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
         
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2267,7 +2263,9 @@ def main(setting_params):
         else:
             target_cols= ["target"]
             setting_params["num_class"] = 4
-   
+    elif mode == "ave":
+        target_cols= ["target"]
+        setting_params["num_class"] = len(target_cols)
     
 
 

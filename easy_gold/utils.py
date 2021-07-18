@@ -264,11 +264,29 @@ def timer(name):
     
 #     return df
     
+def compHist(np_oof, np_y_pred, np_y_true, title_str):
 
-def compPredTarget(y_pred, y_true, index_list, title_str="oof_diff", lm_flag=False):
-        # model.fit(self.valid_train_X, self.valid_train_y)
-        # valid_train_pred = model.predict(self.valid_train_X)
-        # valid_test_pred = model.predict(self.valid_test_X)
+    np_list = [np_oof, np_y_true, np_y_pred]
+    label_list = ["oof", "true", "pred"]
+    color_list = ['red', 'blue', 'green']
+
+    for np_data, label, color in zip(np_list, label_list, color_list):
+        
+        sns.distplot(
+            np_data,
+            #bins=sturges(len(data)),
+            color=color,
+            kde=True,
+            label=label
+        )
+
+
+    plt.savefig(str(PATH_TO_GRAPH_DIR / f"{title_str}_compHist.png"))
+    plt.close()
+
+
+def compPredTarget(y_pred, y_true, index_list, title_str, lm_flag=False):
+
 
     
         df_total = pd.DataFrame({"Prediction" : y_pred.flatten(),
@@ -279,31 +297,24 @@ def compPredTarget(y_pred, y_true, index_list, title_str="oof_diff", lm_flag=Fal
         
         print(df_total)
     
-        # df_tmp2 = pd.DataFrame({"Prediction" : valid_test_pred,
-        #                        "Target" : self.valid_test_y,
-        #                        "Difference" : np.abs(valid_test_pred - self.valid_test_y),
-        #                        "type" : np.full(len(valid_test_pred), "valid_test")
-        #                        })
-    
-        #df_total = pd.concat([df_tmp1, df_tmp2], sort=True)
+
         print("Difference > 0.1 : ", df_total[np.abs(df_total["Difference"]) > 0.1].Difference.count())
         #print(df_total[df_total["type"]=="valid_train"].Difference)
         
         fig = plt.figure()
-        sns.distplot(df_total.Difference,bins=10)
-        #sns.distplot(df_total[df_total["type"]=="valid_test"].Difference, bins=10)
-        #plt.show()
-        plt.savefig(os.path.join(str(PATH_TO_GRAPH_DIR), "{}_oof_diff_distfig.png".format(datetime.now().strftime("%Y%m%d_%H%M%S"))))
+        sns.displot(df_total.Difference,bins=10)
+        plt.savefig(str(PATH_TO_GRAPH_DIR / f"{title_str}_oof_diff_distplot.png"))
         plt.close()
         
+        #pdb.set_trace()
+
         if lm_flag:
             plt.figure()
             fig2 = sns.lmplot(x="Target", y="Prediction", data=df_total, palette="Set1")
             #fig.set_axis_labels('target', 'pred')
             plt.title(title_str)
             plt.tight_layout()
-            #plt.show()
-            plt.savefig(os.path.join(str(PATH_TO_GRAPH_DIR), "{}_oof_diff_fig.png".format(datetime.now().strftime("%Y%m%d_%H%M%S"))))
+            plt.savefig(str(PATH_TO_GRAPH_DIR / f"{title_str}_oof_true_lm.png"))
                 
             plt.close()
 

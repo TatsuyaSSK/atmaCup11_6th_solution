@@ -548,6 +548,7 @@ class PytrochLightningBase():
 
         # if X_valid is not None:
         #     print(checkpoint_callback.best_model_path)
+        #     pdb.set_trace()
         #     self.model.load_state_dict(torch.load(checkpoint_callback.best_model_path), strict=False) #self.model.load_from_checkpoint(checkpoint_path=checkpoint_callback.best_model_path)
         #     #self.model.load_state_dict(torch.load(str(params["path_to_model"])+".ckpt"))
         # else:
@@ -632,9 +633,12 @@ class PytrochLightningBase():
             return -1
         ppath_to_model = name_list[0]
 
-
-        self.model.load_state_dict(torch.load(str(ppath_to_model)))
-        print(f'Trained nn model was loaded! : {ppath_to_model}')
+        ppath_to_ckpt_model = searchCheckptFile(ppath_to_save_dir, ppath_to_model, prefix)
+        
+        #pdb.set_trace()
+        self.model.load_state_dict(torch.load(str(ppath_to_ckpt_model))["state_dict"])
+        #self.model.load_state_dict(torch.load(str(ppath_to_model)))
+        print(f'Trained nn model was loaded! : {ppath_to_ckpt_model}')
         
         a = int(re.findall('iter_(\d+)__', str(ppath_to_model))[0])
         
@@ -677,30 +681,32 @@ class SSL_Wrapper(PytrochLightningBase):
         self.model = SupConModel(base_name="efficientnet_b1") #num_out=num_out, regression_flag=regression_flag)
 
 class ResNet_Wrapper(PytrochLightningBase):
-    def __init__(self, num_out, regression_flag):
+    def __init__(self, img_size, num_out, regression_flag):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {}
+        self.initial_params["dataset_params"] =  {"img_size":img_size}
         
         self.model = myResNet(num_out=num_out, regression_flag=regression_flag)
 
 
 class multiLabelNet(PytrochLightningBase):
-    def __init__(self, num_out, regression_flag, tech_weight, material_weight):
+    def __init__(self, img_size, num_out, regression_flag, tech_weight, material_weight):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {}
+        self.initial_params["dataset_params"] = {"img_size":img_size}
         
-        self.model = myMultilabelNet(num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        self.model = myMultilabelNet(base_name="efficientnet_b1", num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
+
+        
 class LastQueryTransformer_Wrapper(PytrochLightningBase):
     def __init__(self,
                 #f_all, 

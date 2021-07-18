@@ -25,6 +25,7 @@ from model_wrappers import *
 from eda import procEDA
 from MyFoldSplit import TournamentGroupKFold, DummyKfold, SeasonKFold, myStratifiedKFold, myStratifiedKFoldWithGroupID, siteStratifiedPathGroupKFold, StratifiedKFoldWithGroupID
 #from preprocess import procTest
+from ErrorAnalysis import ErrorAnalysis
 
 
 
@@ -407,7 +408,8 @@ class RegressorModel(object):
                 if ret < 0:
                     if (not ON_KAGGLE) and (params["no_wandb"]==False):
                         params["wb_run_name"] = wb_run_name_base + f"_fold_{fold_n}"
-
+                    
+                    params["fold_n"] = fold_n
                     model.fit(X_train, y_train, X_valid, y_valid, X_hold, y_holdout, params=params)
                     model.procModelSaving(params["model_dir_name"], prefix=f"fold_{fold_n}__iter_{model.best_iteration_}", bs=model.best_score_)
 
@@ -485,6 +487,8 @@ class RegressorModel(object):
 
         if (plot==True) & (ON_KAGGLE==False):
 
+            #self.errorAnalysis(self.df_oof, y, self.valid_indices, params)
+
             if self.n_target  == 1:
 
                 #category_cols=[ "part", ]
@@ -506,6 +510,37 @@ class RegressorModel(object):
 
                 plt.savefig(os.path.join(str(PATH_TO_GRAPH_DIR), "{}_result_fig.png".format(datetime.now().strftime("%Y%m%d_%H%M%S"))))
                 plt.close()
+
+
+    # def errorAnalysis(self, df_oof, df_y, valid_indices, params):
+
+    #     for target_col in params["target_name"]:
+
+    #         prefix=f'{params["model_dir_name"]}_{target_col}'
+    #         se_oof = df_oof.iloc[valid_indices][target_col]
+    #         se_y = df_y.iloc[valid_indices][target_col]
+    #         pdb.set_trace()
+
+    #         compPredTarget(se_oof.values, se_y.values, index_list=se_y.index, title_str=f"{prefix}_oof_diff", lm_flag=True)
+
+    #         fig, ax = plt.subplots(figsize=(16, 12))
+    #         plt.subplot(2, 2, 1)
+    #         self.plot_feature_importance(top_n=20)
+    #         plt.subplot(2, 2, 2)
+    #         self.plot_metric()
+    #         plt.subplot(2, 2, 3)
+    #         plt.hist(se_y.values.reshape(-1, 1) - se_oof.values.reshape(-1, 1))
+    #         plt.title('Distribution of errors')
+    #         plt.subplot(2, 2, 4)
+    #         plt.hist(se_oof.values.reshape(-1, 1))
+    #         plt.title('Distribution of oof predictions');
+
+    #         plt.savefig(str(PATH_TO_GRAPH_DIR /f"{prefix}_result_fig.png"))
+    #         plt.close()
+
+    #         pdb.set_trace()
+                
+
 
 
     def loadModels(self, params, eval_metric, folds):
@@ -1136,6 +1171,7 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
     params["num_class"] = setting_params["num_class"]
     params["no_wandb"] = setting_params["no_wandb"]
     params["num_tta"] = setting_params["num_tta"]
+    params["pretrain_model_dir_name"] = setting_params["pretrain_model_dir_name"]
 
     params["use_columns"] = use_columns
 
@@ -1558,6 +1594,16 @@ def calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, 
             slack.notify(text=print_text)
 
 
+        df_train["target"] = df_train["target"].values * 3.0
+        myEA = ErrorAnalysis(_df_train=df_train, _df_test=df_test, 
+                            _index_col=df_train.index.name, _target_col_list=setting_params["target"], 
+                            _prefix=setting_params['model_dir_name'])
+
+        myEA.procAnalysis(df_oof, df_y_pred, index_list=df_oof.index)
+        myEA.procClass(df_oof, df_y_pred, index_list=df_oof.index)
+
+
+
     else:
         final_score = np.nan
     return final_score
@@ -1752,17 +1798,20 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             
 
         if setting_params["num_class"] == 1:
-            #eval_metric_name = 'rmse'
-            #eval_metric_func_dict= {eval_metric_name:my_eval}
+            eval_metric_name = 'rmse'
+            eval_metric_func_dict= {eval_metric_name:my_eval}
 
-            eval_metric_name = "val_loss"
-            eval_metric_func_dict = {}
+            #eval_metric_name = "val_loss"
+            #eval_metric_func_dict = {}
 
         elif setting_params["num_class"] >= 4:
             eval_metric_name = 'rmse'
             eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
             eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
             #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
+
+            #eval_metric_name = "val_loss"
+            #eval_metric_func_dict = {}
 
 
 
@@ -2051,9 +2100,9 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
         #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        #model_wrapper = multiLabelNet(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
-        #                            tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
+        #model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
+        model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
+                                    tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
         
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2195,9 +2244,9 @@ def main(setting_params):
     
         if setting_params["type"]=="regression":
             target_cols= ["target", 
-                            #"techniques_brush",
-                            #"techniques_pen",
-                            #"techniques_counterproof",
+                            "techniques_brush",
+                            "techniques_pen",
+                            "techniques_counterproof",
 
                             # #"materials_cardboard",  #
                             # "materials_chalk",
@@ -2302,12 +2351,14 @@ def argParams():
     parser.add_argument('-no_wb', '--no_wandb', action="store_true")
 
     parser.add_argument('-model_dir', '--model_dir_name', type=str)
+    parser.add_argument('-pretrain', '--pretrain_model_dir_name', type=str)
     parser.add_argument('-pred', '--pred_only', action="store_true")
     parser.add_argument('-pred2', '--pred2_only', action="store_true")
     parser.add_argument('-mid_save', '--mid_save', action="store_true")
     parser.add_argument('-permu', '--permutation_feature_flag', action="store_true")
     parser.add_argument('-tta', '--num_tta', type=int, default=1)
     parser.add_argument('-img_size', '--img_size', type=int, default=320)
+
 
 
 

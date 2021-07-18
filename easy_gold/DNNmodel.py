@@ -729,8 +729,9 @@ class myMultilabelNet(PytorchLightningModelBase):
         print("show eval metrics : ")
         print(self.eval_metric_func_dict)
 
-        ppath_to_backbone_dir = PATH_TO_MODEL_DIR/_params["pretrain_model_dir_name"]
-        self.loadBackbone(ppath_to_backbone_dir, fold_num=_params["fold_n"])
+        if _params["pretrain_model_dir_name"] is not None:
+            ppath_to_backbone_dir = PATH_TO_MODEL_DIR/_params["pretrain_model_dir_name"]
+            self.loadBackbone(ppath_to_backbone_dir, fold_num=_params["fold_n"])
 
 class myResNet(PytorchLightningModelBase):
     def __init__(self, num_out, regression_flag=True) -> None:

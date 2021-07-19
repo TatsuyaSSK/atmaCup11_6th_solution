@@ -708,8 +708,8 @@ class multiLabelNet(PytrochLightningBase):
         self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag}
         
         in_channels=4 if salient_flag else 3
-        #'', efficientnet_b1
-        self.model = myMultilabelNet(base_name="vit_small_patch16_384", in_channels=in_channels,num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        #'resnet18', 
+        self.model = myMultilabelNet(base_name="efficientnet_b1", in_channels=in_channels,num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
 
         

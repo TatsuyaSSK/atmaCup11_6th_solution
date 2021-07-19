@@ -2263,9 +2263,9 @@ def main(setting_params):
     
         if setting_params["type"]=="regression":
             target_cols= ["target", 
-                            #"techniques_brush",
-                            #"techniques_pen",
-                            #"techniques_counterproof",
+                            "techniques_brush",
+                            "techniques_pen",
+                            "techniques_counterproof",
 
                             # #"materials_cardboard",  #
                             # "materials_chalk",
@@ -2286,7 +2286,7 @@ def main(setting_params):
         else:
             target_cols= ["target"]
             setting_params["num_class"] = 4
-    elif mode == "ave":
+    elif (mode == "ave") or (mode == "stack"):
         target_cols= ["target"]
         setting_params["num_class"] = len(target_cols)
     

@@ -29,7 +29,7 @@ def copyImg():
     for index, row in df_train.iterrows():
         target_num = row["target"]
         ppath_to_image = ppath_to_dir / row["image_name"]
-        
+        img = Image.open(ppath_to_img)
         
         # pp_dir = ppath_to_dir / f"train/{target_num}"
         # os.makedirs(pp_dir, exist_ok=True)

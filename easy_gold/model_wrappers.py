@@ -708,7 +708,7 @@ class multiLabelNet(PytrochLightningBase):
         self.initial_params["dataset_params"] = {"img_size":img_size}
         
         #'', efficientnet_b1
-        self.model = myMultilabelNet(base_name="vit_base_patch16_384", num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        self.model = myMultilabelNet(base_name="vit_small_patch16_384", num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
 
         

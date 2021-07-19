@@ -1486,6 +1486,25 @@ def calcMetaWeight(df_train, df_test, setting_params):
 
 gl_norm_dict = {}
 
+def addPseudoLabeling(df_train, df_test, target_col_list):
+
+    df_pseudo = df_test.copy()
+    df_sub = pd.read_csv(OUTPUT_DIR/"20210718-182046_20210718_182054_Averaging_Wrapper--0.675055--_submission.csv")
+
+    for col in target_col_list:
+        df_pseudo[col] = df_sub[col]
+
+        if col == "target":
+            df_pseudo[col] = df_pseudo[col].map(lambda x: 0 if x < 0.5 else (1 if x < 1.5 else (2 if x < 2.5 else 3)))
+        else:
+            df_pseudo[col] = df_pseudo[col].map(lambda x: 0 if x < 0.5 else 1)
+    
+    max_art_id = df_train["art_series_id"].max()
+    df_pseudo["art_series_id"] = np.array(range(max_art_id+1, df_pseudo.shape[0]+max_art_id+1))
+    df_train = pd.concat([df_train, df_pseudo])
+    
+    return df_train
+
 def preproc(df_train, df_test, target_col_list, setting_params):
 
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
@@ -1495,6 +1514,10 @@ def preproc(df_train, df_test, target_col_list, setting_params):
         pass
 
     else:
+
+        if setting_params["pseudo_labeling"]:
+            df_train =addPseudoLabeling(df_train, df_test, target_col_list)
+
 
         df_train = drop_art_series(df_train)
 
@@ -2356,6 +2379,7 @@ def argParams():
     parser.add_argument('-permu', '--permutation_feature_flag', action="store_true")
     parser.add_argument('-tta', '--num_tta', type=int, default=1)
     parser.add_argument('-img_size', '--img_size', type=int, default=320)
+    parser.add_argument('-pseudo', '--pseudo_labeling', action="store_true")
 
 
 

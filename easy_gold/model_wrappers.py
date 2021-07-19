@@ -140,7 +140,11 @@ class Averaging_Wrapper(object):
             pred_f_name = oof_f_name.replace("oof", "submission")
             print(pred_f_name)
             
-            df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col]
+            #for atam11, commentout!
+            if PROJECT_NAME == "atma11":
+                df_pred = pd.read_csv(str(f.parent/pred_f_name))[self.target_col]
+            else:
+                df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col]
             
             print(f"df_pred : {df_pred}")
             y_pred_list.append(df_pred)
@@ -221,7 +225,7 @@ class Averaging_Wrapper(object):
         
         self.setFeatureImportance(X_train.columns)
 
-    def predict(self, X_test):
+    def predict(self, X_test, oof_flag=True):
         
         if self.rate_list_ == None:
             print(f"X_test : {X_test}")
@@ -231,7 +235,7 @@ class Averaging_Wrapper(object):
             pred = np.zeros(len(X_test))
             for c, r in zip(X_test.columns, self.rate_list_):
                 pred += (X_test[c] * r).values
-            return pred
+            return pred.reshape(-1, 1)
 
     def setFeatureImportance(self, columns_list):
         self.feature_importances_ = np.zeros(len(columns_list))
@@ -528,6 +532,12 @@ class PytrochLightningBase():
                                 save_weights_only=True,
                                 )
 
+        # callbacks_list = []
+        # if params['early_stopping_rounds'] > 0:
+        #     callbacks_list = [early_stop_callback, checkpoint_callback]
+
+                                
+
         self.trainer = pl.Trainer(
                         num_sanity_val_steps=0,
                         gpus=self.initial_params["use_gpu"], 
@@ -542,6 +552,7 @@ class PytrochLightningBase():
 
         # if X_valid is not None:
         #     print(checkpoint_callback.best_model_path)
+        #     pdb.set_trace()
         #     self.model.load_state_dict(torch.load(checkpoint_callback.best_model_path), strict=False) #self.model.load_from_checkpoint(checkpoint_path=checkpoint_callback.best_model_path)
         #     #self.model.load_state_dict(torch.load(str(params["path_to_model"])+".ckpt"))
         # else:
@@ -626,9 +637,12 @@ class PytrochLightningBase():
             return -1
         ppath_to_model = name_list[0]
 
-
-        self.model.load_state_dict(torch.load(str(ppath_to_model)))
-        print(f'Trained nn model was loaded! : {ppath_to_model}')
+        ppath_to_ckpt_model = searchCheckptFile(ppath_to_save_dir, ppath_to_model, prefix)
+        
+        #pdb.set_trace()
+        self.model.load_state_dict(torch.load(str(ppath_to_ckpt_model))["state_dict"])
+        #self.model.load_state_dict(torch.load(str(ppath_to_model)))
+        print(f'Trained nn model was loaded! : {ppath_to_ckpt_model}')
         
         a = int(re.findall('iter_(\d+)__', str(ppath_to_model))[0])
         
@@ -658,31 +672,46 @@ class PytrochLightningBase():
 
         return 0
 
+class SSL_Wrapper(PytrochLightningBase):
+    def __init__(self, img_size, num_out, regression_flag):
+        
+        super().__init__()
+        
+        self.initial_params["dataset_class"] = SupConDataset
+        self.initial_params["collate_fn"] = None #collate_fn_Transformer
+
+        self.initial_params["dataset_params"] = {"img_size":img_size}
+        
+        self.model = SupConModel(base_name="vit_small_patch16_384") #num_out=num_out, regression_flag=regression_flag)
+
 class ResNet_Wrapper(PytrochLightningBase):
-    def __init__(self, num_out, regression_flag):
+    def __init__(self, img_size, num_out, regression_flag):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {}
+        self.initial_params["dataset_params"] =  {"img_size":img_size}
         
         self.model = myResNet(num_out=num_out, regression_flag=regression_flag)
 
 
 class multiLabelNet(PytrochLightningBase):
-    def __init__(self, num_out, regression_flag, tech_weight, material_weight):
+    def __init__(self, img_size, num_out, regression_flag, tech_weight, material_weight):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {}
+        self.initial_params["dataset_params"] = {"img_size":img_size}
         
-        self.model = myMultilabelNet(num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        #'', efficientnet_b1
+        self.model = myMultilabelNet(base_name="vit_small_patch16_384", num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
+
+        
 class LastQueryTransformer_Wrapper(PytrochLightningBase):
     def __init__(self,
                 #f_all, 

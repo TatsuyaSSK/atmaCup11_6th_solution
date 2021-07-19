@@ -31,18 +31,20 @@ def copyImg():
         ppath_to_image = ppath_to_dir / row["image_name"]
         
         
-        pp_dir = ppath_to_dir / f"train/{target_num}"
-        os.makedirs(pp_dir, exist_ok=True)
+        # pp_dir = ppath_to_dir / f"train/{target_num}"
+        # os.makedirs(pp_dir, exist_ok=True)
         
         
-        new_pp = pp_dir / row["image_name"]
-        shutil.copy(ppath_to_image, new_pp)
+        # new_pp = pp_dir / row["image_name"]
+        # shutil.copy(ppath_to_image, new_pp)
 
         pp_dir = ppath_to_dir / f"train_salient/{target_num}"
         os.makedirs(pp_dir, exist_ok=True)
+        new_pp = pp_dir / row["image_name"]
 
         salient_img = getSaliencyImg(str(ppath_to_image), salient_type="SR")
-        pdb.set_trace()
+        cv2.imwrite(str(new_pp), salient_img)
+        #pdb.set_trace()
         
     for index, row in df_test.iterrows():
         
@@ -61,6 +63,21 @@ def drop_art_series(df_train):
     df_train = df_train.loc[~df_train["art_series_id"].isin(drop_series)]   
 
     return df_train
+
+
+def proc_old_oof():
+
+    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
+    df_train = drop_art_series(df_train)
+
+    file_prefix = "20210712_132557_ResNet_Wrapper--0.808721--"
+    df_oof = pd.read_csv(OUTPUT_DIR/f"ave/{file_prefix}_oof.csv", index_col="object_id") 
+
+
+    df_oof = df_oof.loc[df_oof.index.isin(df_train.index)]
+    df_oof = df_oof.reset_index()
+    df_oof.to_csv(OUTPUT_DIR/f"ave/{file_prefix}_oof.csv", index=False)
+
         
 def sub_round():
 
@@ -143,4 +160,4 @@ def lgb_prepro():
         
 if __name__ == '__main__':
     
-    copyImg()
+    proc_old_oof()

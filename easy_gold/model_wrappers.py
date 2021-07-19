@@ -283,8 +283,8 @@ class Model_Wrapper_Base(object):
         logger.debug(self.best_score_)
         self.setFeatureImportance(X_train.columns)
 
-    def predict(self, X_test):
-        return self.model.predict(X_test)
+    def predict(self, X_test, oof_flag=True):
+        return self.model.predict(X_test).reshape(-1, 1)
 
 
     def setFeatureImportance(self, columns_list):
@@ -299,10 +299,10 @@ class ElasticNetRegression_Wrapper(Model_Wrapper_Base):
         self.model = ElasticNet()
         
         tmp_param = {
-                 'alpha': 0.0001,#0.0005,
+                 'alpha': 0.005,#0.001,#0.0005,
                  'copy_X': True,
                  'fit_intercept': True,
-                 'l1_ratio': 0.001,#0.05,
+                 'l1_ratio': 0.01,#0.001,#0.05,
                  'max_iter': 1000,
                  'normalize': False,
                  'positive': False,
@@ -320,7 +320,7 @@ class Lasso_Wrapper(Model_Wrapper_Base):
         self.model = Lasso()
         
         tmp_param = {
-                 'alpha': 0.0005,
+                 'alpha': 0.001, # 0.0005,
                  
                  }
         self.initial_params.update(tmp_param)
@@ -374,14 +374,14 @@ class LogisticRegression_Wrapper(Model_Wrapper_Base):
         self.initial_params.update(tmp_param)
 
 
-    def predict(self, X_test):
+    def predict(self, X_test, oof_flag=True):
 
         if self.edit_params['binary_flag']:
             print("probability")
             return self.model.predict_proba(X_test)[:, 1]
         else:
             #return self.model.predict(X_test)
-            return self.model.predict_proba(X_test)
+            return self.model.predict_proba(X_test) #.reshape(-1, 1)
 
     def setFeatureImportance(self, columns_list):
         self.feature_importances_ = pd.Series(self.model.coef_[0])
@@ -408,7 +408,7 @@ class RandomForestClassifier_Wrapper(Model_Wrapper_Base):
         self.initial_params.update(tmp_param)
 
 
-    def predict(self, X_test):
+    def predict(self, X_test, oof_flag=True):
 
         if self.edit_params['binary_flag']:
             print("probability")

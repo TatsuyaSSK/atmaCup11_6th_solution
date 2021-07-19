@@ -1320,10 +1320,10 @@ class StackingWrapper(object):
         logger.debug(self.best_score_)
         self.feature_importances_ = self.meta_model.feature_importances_
 
-    def predict(self, X_test):
+    def predict(self, X_test, oof_flag=True):
         print("X_test:{}".format(X_test.shape))
 
-        return self.meta_model.predict(X_test)
+        return self.meta_model.predict(X_test, oof_flag=oof_flag)
 
 class SimpleStackingWrapper(StackingWrapper):
 
@@ -1334,6 +1334,7 @@ class SimpleStackingWrapper(StackingWrapper):
         self.meta_model = meta_model
         self.target_col_list = target_col_list
         self.initial_params = self.meta_model.initial_params
+        self.best_iteration_ = 1
 
         self.df_meta_train, self.df_meta_test = self.setMetaFromFiles(path_to_meta_feature_dir)
 
@@ -1347,16 +1348,7 @@ class SimpleStackingWrapper(StackingWrapper):
         print(f"idx1:{len(idx1)}")
         print(f"idx2:{len(idx2)}")
 
-        #for mRNAdata
-        meta_train_mol_ids = df_train.loc[self.df_meta_train.index,"id"].unique()
-        scored_length = df_train.loc[self.df_meta_train.index,"seq_scored"].values[0]
-        print(f"meta_train_mol_ids : {len(meta_train_mol_ids)}")
-        print(f"scored_length:{scored_length}")
-        scored_mol_pos_ids = [f"{mol_id}_{i}" for mol_id in meta_train_mol_ids for i in range(scored_length)]
-        print(f"scored_mol_pos_ids : {len(scored_mol_pos_ids)}")
-
-        self.df_meta_train = self.df_meta_train.loc[scored_mol_pos_ids, :]
-        print(self.df_meta_train)
+        
 
         #print(idx1-idx2)
         #print(idx2-idx1)
@@ -1380,7 +1372,7 @@ class SimpleStackingWrapper(StackingWrapper):
             print(oof_f_name)
 
             df_oof = pd.read_csv(str(f.parent/oof_f_name), index_col=0)[self.target_col_list]
-            df_oof.sort_values('id_seqpos',inplace=True, ascending=True)
+
             print(f"df_oof : {df_oof.shape}")
             #oof_list.append(df_oof[self.target_col].values.reshape(-1, 1))
             oof_list.append(df_oof)
@@ -1391,8 +1383,14 @@ class SimpleStackingWrapper(StackingWrapper):
             pred_f_name = oof_f_name.replace("oof", "submission")
             print(pred_f_name)
 
-            df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col_list]
-            df_pred.sort_values('id_seqpos',inplace=True, ascending=True)
+            #for atam11, commentout!
+            if PROJECT_NAME == "atma11":
+                df_pred = pd.read_csv(str(f.parent/pred_f_name))[self.target_col_list]
+            else:
+                df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col_list]
+            
+
+
             print(f"df_pred : {df_pred.shape}")
             #y_pred_list.append(df_pred[self.target_col].values.reshape(-1, 1))
             y_pred_list.append(df_pred)
@@ -1406,6 +1404,14 @@ class SimpleStackingWrapper(StackingWrapper):
 
 
         return df_oof, df_pred
+
+    def procModelSaving(self, model_dir_name, prefix, bs):
+
+        ppath_to_save_dir = PATH_TO_MODEL_DIR / model_dir_name
+        if not ppath_to_save_dir.exists():
+            ppath_to_save_dir.mkdir()
+        
+        pass
 
 def interpolationSpline(df_y_pred, df_oof, true_y):
     
@@ -1601,7 +1607,7 @@ def calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, 
 
 
         df_oof = df_oof.reindex(df_train.index)
-        y_true = df_train[["target"]].values * 3 if setting_params["mode"] != "ave" else df_train[["target"]].values
+        y_true = df_train[["target"]].values * 3 if ((setting_params["mode"] != "ave") and (setting_params["mode"] != "stack")) else df_train[["target"]].values
         y_oof_pred = df_oof[["target"]].values
         
         from sklearn.metrics import mean_squared_error
@@ -2149,7 +2155,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
 
     if (setting_params["mode"]=="stack"):
-        meta_model = Ridge_Wrapper()
+        meta_model =  Lasso_Wrapper()#Lasso_Wrapper()#ElasticNetRegression_Wrapper()
         model_wrapper = SimpleStackingWrapper(df_train, df_test, target_col_list,  meta_model, str(OUTPUT_DIR / setting_params["stacking_dir_name"]))
         df_train = model_wrapper.df_meta_train
         df_test = model_wrapper.df_meta_test
@@ -2295,7 +2301,7 @@ def main(setting_params):
 
     if setting_params["pred_only"]==False:
         
-        if mode == "ave":
+        if (mode == "ave")  or (mode == "stack"):
             mode = "nn"
 
         df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_{mode}.pkl')

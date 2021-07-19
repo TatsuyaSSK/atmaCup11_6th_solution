@@ -1,5 +1,6 @@
 
 from utils import *
+from image_utils import *
 
 from typing import Optional, Dict, List, Callable, Union, Collection
 import torch

@@ -2121,7 +2121,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
         #model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
         model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
-                                    tech_weight=None, material_weight =None)
+                                      salient_flag=setting_params["salient_flag"], tech_weight=None, material_weight =None)
         
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2380,6 +2380,7 @@ def argParams():
     parser.add_argument('-tta', '--num_tta', type=int, default=1)
     parser.add_argument('-img_size', '--img_size', type=int, default=320)
     parser.add_argument('-pseudo', '--pseudo_labeling', action="store_true")
+    parser.add_argument('-salient', '--salient_flag', action="store_true")
 
 
 

@@ -698,17 +698,18 @@ class ResNet_Wrapper(PytrochLightningBase):
 
 
 class multiLabelNet(PytrochLightningBase):
-    def __init__(self, img_size, num_out, regression_flag, tech_weight, material_weight):
+    def __init__(self, img_size, num_out, regression_flag, salient_flag, tech_weight, material_weight):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {"img_size":img_size}
+        self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag}
         
+        in_channels=4 if salient_flag else 3
         #'', efficientnet_b1
-        self.model = myMultilabelNet(base_name="vit_small_patch16_384", num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        self.model = myMultilabelNet(base_name="vit_small_patch16_384", in_channels=in_channels,num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
 
         

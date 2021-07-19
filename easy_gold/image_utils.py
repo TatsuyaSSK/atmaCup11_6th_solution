@@ -92,7 +92,7 @@ def getSaliencyImg(path_to_image, salient_type="SR"):
 
 
     (success, saliencyMap) = saliency.computeSaliency(img)
-    saliencyMap = (saliencyMap * 255).astype("uint8")
+    #saliencyMap = (saliencyMap * 255).astype("uint8")
 
 
     return saliencyMap

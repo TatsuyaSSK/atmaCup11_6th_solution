@@ -419,6 +419,10 @@ class SupConModel(PytorchLightningModelBase):
         print(f"{base_name}: {in_features}")
         #pdb.set_trace()
 
+        if "vit" in base_name:
+            self.backbone.patch_embed = ConvEmbed(in_chans=in_channels, embed_dim=384)
+            self.backbone.blocks = self.backbone.blocks[:-1] 
+
         # 参考
         # https://github.com/HobbitLong/SupContrast/blob/8d0963a7dbb1cd28accb067f5144d61f18a77588/networks/resnet_big.py#L174
         self.head = nn.Sequential(
@@ -532,6 +536,40 @@ class SupConModel(PytorchLightningModelBase):
         #pdb.set_trace()
         return {'out': out}
 
+class ConvEmbed(nn.Module):
+    """ 2D Image to Patch Embedding
+    """
+    def __init__(self, in_chans=3, embed_dim=768):#, norm_layer=None, flatten=True):
+        super().__init__()
+        # img_size = to_2tuple(img_size)
+        # patch_size = to_2tuple(patch_size)
+        # self.img_size = img_size
+        # self.patch_size = patch_size
+        # self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
+        # self.num_patches = self.grid_size[0] * self.grid_size[1]
+        # self.flatten = flatten
+
+        self.proj = nn.Sequential(
+                nn.Conv2d(in_chans, embed_dim//8, 3, stride=2, padding=1),
+                nn.Conv2d(embed_dim//8, embed_dim//4, 3, stride=2, padding=1),
+                nn.Conv2d(embed_dim//4, embed_dim//2, 3, stride=2, padding=1),
+                nn.Conv2d(embed_dim//2, embed_dim, 3, stride=2, padding=1),
+                nn.Conv2d(embed_dim, embed_dim, 1, stride=1, padding=0),
+                
+            )
+
+        #self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        #.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+
+    def forward(self, x):
+        #B, C, H, W = x.shape
+        #assert H == self.img_size[0] and W == self.img_size[1], \
+        #    f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+        x = self.proj(x)
+        #if self.flatten:
+        x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
+        #x = self.norm(x)
+        return x
 class myMultilabelNet(PytorchLightningModelBase):
     def __init__(self, base_name: str, pretrained=False,
                 in_channels: int=3, num_out=1, 
@@ -545,6 +583,7 @@ class myMultilabelNet(PytorchLightningModelBase):
 
         self.tech_weight = tech_weight
         self.material_weight = material_weight
+        self.base_name = base_name
 
 
         # # prepare backbone
@@ -557,14 +596,24 @@ class myMultilabelNet(PytorchLightningModelBase):
             raise NotImplementedError
 
         self.backbone = base_model
+        
+
+        
+        if "vit" in base_name:
+            self.backbone.patch_embed = ConvEmbed(in_chans=in_channels, embed_dim=384)
+            self.backbone.blocks = self.backbone.blocks[:-1] 
+        #pdb.set_trace()
+
         print(self.backbone)
         print(f"{base_name}: {in_features}")
 
-        
-        
-
         self.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
-
+        # self.classifier = nn.Sequential(
+        #         nn.Linear(in_features, in_features),
+        #         nn.Linear(in_features, in_features),
+        #         #nn.ReLU(inplace=True),
+        #         nn.Linear(in_features, num_out)
+        #     )
         #self.model = timm.create_model('efficientnet_b1', pretrained=False)
         #self.model.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
 
@@ -600,6 +649,8 @@ class myMultilabelNet(PytorchLightningModelBase):
      
         img =  batch[0][0]
         #print(f"img : {img.shape}")
+        
+
         out = self.backbone(img)
         out = self.classifier(out)
 
@@ -642,9 +693,11 @@ class myMultilabelNet(PytorchLightningModelBase):
         tech_weight = None#torch.tensor(self.tech_weight,device=y_pred.device) if self.tech_weight is not None else None
         material_weight = None#torch.tensor(self.material_weight,device=y_pred.device)if self.material_weight is not None else None
 
-        num_tech = 3
-        loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
-        #loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
+        loss_tech=0
+        if y_true.shape[1] > 1:
+            num_tech = 3
+            loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
+            #loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
 
         return loss_target +  loss_tech #+ loss_material /3.0
 
@@ -732,6 +785,11 @@ class myMultilabelNet(PytorchLightningModelBase):
         if _params["pretrain_model_dir_name"] is not None:
             ppath_to_backbone_dir = PATH_TO_MODEL_DIR/_params["pretrain_model_dir_name"]
             self.loadBackbone(ppath_to_backbone_dir, fold_num=_params["fold_n"])
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        return optimizer
+
 
 class myResNet(PytorchLightningModelBase):
     def __init__(self, num_out, regression_flag=True) -> None:

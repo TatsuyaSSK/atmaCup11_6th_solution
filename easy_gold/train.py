@@ -1486,6 +1486,25 @@ def calcMetaWeight(df_train, df_test, setting_params):
 
 gl_norm_dict = {}
 
+def addPseudoLabeling(df_train, df_test, target_col_list):
+
+    df_pseudo = df_test.copy()
+    df_sub = pd.read_csv(OUTPUT_DIR/"20210718-182046_20210718_182054_Averaging_Wrapper--0.675055--_submission.csv")
+
+    for col in target_col_list:
+        df_pseudo[col] = df_sub[col]
+
+        if col == "target":
+            df_pseudo[col] = df_pseudo[col].map(lambda x: 0 if x < 0.5 else (1 if x < 1.5 else (2 if x < 2.5 else 3)))
+        else:
+            df_pseudo[col] = df_pseudo[col].map(lambda x: 0 if x < 0.5 else 1)
+    
+    max_art_id = df_train["art_series_id"].max()
+    df_pseudo["art_series_id"] = np.array(range(max_art_id+1, df_pseudo.shape[0]+max_art_id+1))
+    df_train = pd.concat([df_train, df_pseudo])
+    
+    return df_train
+
 def preproc(df_train, df_test, target_col_list, setting_params):
 
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
@@ -1495,6 +1514,10 @@ def preproc(df_train, df_test, target_col_list, setting_params):
         pass
 
     else:
+
+        if setting_params["pseudo_labeling"]:
+            df_train =addPseudoLabeling(df_train, df_test, target_col_list)
+
 
         df_train = drop_art_series(df_train)
 
@@ -1801,13 +1824,13 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             #eval_metric_func_dict = {}
 
         elif setting_params["num_class"] >= 4:
-            #eval_metric_name = 'rmse'
-            #eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
-            #eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
+            eval_metric_name = 'rmse'
+            eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
+            eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
             #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
 
-            eval_metric_name = "val_loss"
-            eval_metric_func_dict = {}
+            #eval_metric_name = "val_loss"
+            #eval_metric_func_dict = {}
 
 
 
@@ -2096,9 +2119,9 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
         #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
         #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        #model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
-        #                            tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
+        #model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
+        model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
+                                    tech_weight=None, material_weight =None)
         
 
         #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
@@ -2240,9 +2263,9 @@ def main(setting_params):
     
         if setting_params["type"]=="regression":
             target_cols= ["target", 
-                            "techniques_brush",
-                            "techniques_pen",
-                            "techniques_counterproof",
+                            #"techniques_brush",
+                            #"techniques_pen",
+                            #"techniques_counterproof",
 
                             # #"materials_cardboard",  #
                             # "materials_chalk",
@@ -2356,6 +2379,7 @@ def argParams():
     parser.add_argument('-permu', '--permutation_feature_flag', action="store_true")
     parser.add_argument('-tta', '--num_tta', type=int, default=1)
     parser.add_argument('-img_size', '--img_size', type=int, default=320)
+    parser.add_argument('-pseudo', '--pseudo_labeling', action="store_true")
 
 
 

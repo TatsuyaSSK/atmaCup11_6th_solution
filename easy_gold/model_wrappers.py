@@ -683,8 +683,8 @@ class SSL_Wrapper(PytrochLightningBase):
 
         self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag}
         in_channels=4 if salient_flag else 3
-        self.model = SupConModel(base_name="efficientnet_b1", in_channels=in_channels,) #num_out=num_out, regression_flag=regression_flag)
-
+        #self.model = SupConModel(base_name="resnet18", in_channels=in_channels,) #num_out=num_out, regression_flag=regression_flag)
+        self.model = SimSiam(base_name="resnet18", in_channels=in_channels,)
 class ResNet_Wrapper(PytrochLightningBase):
     def __init__(self, img_size, num_out, regression_flag):
         

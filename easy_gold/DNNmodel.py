@@ -14,6 +14,7 @@ import pytorch_lightning as pl
 from torchvision.models import resnet34, resnet18, vgg16
 
 import timm
+import lightly
 
 from sklearn import random_projection
 from DataSet import *
@@ -392,6 +393,129 @@ class PytorchLightningModelBase(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         return optimizer
     
+
+class SimSiam(PytorchLightningModelBase):
+
+    def __init__(
+        self, base_name: str, pretrained=False,
+        in_channels: int=3, feat_dim: int=128
+    ):
+
+        """Initialize"""
+        super(SimSiam, self).__init__()
+
+
+        self.avg_loss = 0
+        self.avg_output_std = 0
+
+        self.base_name = base_name
+
+        # # prepare backbone
+        if hasattr(timm.models, base_name):
+            base_model = timm.create_model(
+                base_name, num_classes=0, pretrained=pretrained, in_chans=in_channels)
+            in_features = base_model.num_features
+            print("load imagenet pretrained:", pretrained)
+        else:
+            raise NotImplementedError
+
+        self.backbone = base_model
+        print(self.backbone)
+        print(f"{base_name}: {in_features}")
+
+        self.model = lightly.models.SimSiam(
+                    self.backbone,
+                    num_ftrs=in_features,
+                    proj_hidden_dim=512,
+                    pred_hidden_dim=128,
+                    out_dim=512,
+                    num_mlp_layers=2
+                )
+
+    def _forward(self, batch):
+        
+     
+        img1 =  batch[0][0]
+        img2 =  batch[0][1]
+        y0, y1 = self.model(img1, img2)
+        
+
+        return y0, y1
+
+    def criterion(self, y0, y1, weight=None):
+
+        criterion_func = lightly.loss.SymNegCosineSimilarityLoss()
+        loss = criterion_func(y0, y1)
+
+        return loss
+
+    def calc_avg_loss(self, output, loss):
+
+        output = torch.nn.functional.normalize(output, dim=1)
+
+        output_std = torch.std(output, 0)
+        output_std = output_std.mean()
+
+        # use moving averages to track the loss and standard deviation
+        w = 0.9
+        self.avg_loss = w * self.avg_loss + (1 - w) * loss.item()
+        self.avg_output_std = w * self.avg_output_std + (1 - w) * output_std.item()
+
+
+    def training_step(self, batch, batch_idx):
+        
+        y0, y1 = self._forward(batch)
+
+        #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
+        loss = self.criterion(y0=y0, y1=y1)
+
+        output, _ = y0
+        output = output.detach()
+        self.calc_avg_loss(output, loss)
+        
+        train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=self.avg_output_std.item().cpu().detach(), eval_metric_func_dict=eval_metric_func_dict)
+        
+
+
+        
+        self.log('loss', self.avg_loss, logger=False)
+        ret = {'loss': self.avg_loss}
+
+        for k, v in train_batch_eval_score_dict.items():
+            self.log(f"train_{k}", v, logger=False)
+            ret[f"{k}"] = v
+
+        return ret
+
+
+
+    def validation_step(self, batch, batch_idx):
+
+        out = self._forward(batch)
+
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
+
+        def my_eval_dummy(y_pred, y_true):
+            self.dummy_eval_num+=1
+            return self.dummy_eval_num
+        eval_metric_func_dict= {"eval_dummy":my_eval_dummy}
+
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=eval_metric_func_dict)
+        
+
+
+        self.log('val_loss', loss, logger=False)
+        ret = {'val_loss': loss}
+
+        for k, v in val_batch_eval_score_dict.items():
+            self.log(f"val_{k}", v, logger=False)
+            ret[f"{k}"] = v
+        
+
+        #self.log('val_loss', loss)
+
+
+        return ret
 
 class SupConModel(PytorchLightningModelBase):
 

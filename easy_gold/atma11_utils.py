@@ -15,12 +15,60 @@ import inspect
 from matplotlib_venn import venn2
 from utils import *
 from image_utils import *
+from MyFoldSplit import StratifiedKFoldWithGroupID
 
+
+
+def train_val_split_for_ttl():
+
+    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
+
+    ppath_to_dir = INPUT_DIR/"photos"
+    ppath_to_imagenet_dir = INPUT_DIR/"imagenet"
+    os.makedirs(ppath_to_imagenet_dir, exist_ok=True)
+
+
+    se_y = df_train["target"]
+    df_X = df_train #.drop(columns=["target"])
+    folds = StratifiedKFoldWithGroupID(n_splits=2, group_id_col="art_series_id", stratified_target_id="target")
+    for train_index, test_index in folds.split(df_X, se_y, _group=None):
+        print(f"train : {train_index}")
+        print(f"val : {test_index}")
+
+        for idx in train_index:
+            object_id = df_train.index[idx]
+            label = int(df_train.iloc[idx]["target"])
+
+            pp_dir = ppath_to_imagenet_dir / f"train/{label}"
+            os.makedirs(pp_dir, exist_ok=True)
+            new_pp = pp_dir / f"{object_id}.jpg"
+            ppath_to_image = ppath_to_dir / f"{object_id}.jpg"
+            shutil.copy(ppath_to_image, new_pp)
+
+        for idx in test_index:
+            object_id = df_train.index[idx]
+            label = int(df_train.iloc[idx]["target"])
+
+            pp_dir = ppath_to_imagenet_dir / f"val/{label}"
+            os.makedirs(pp_dir, exist_ok=True)
+            new_pp = pp_dir / f"{object_id}.jpg"
+            ppath_to_image = ppath_to_dir / f"{object_id}.jpg"
+            shutil.copy(ppath_to_image, new_pp)
+
+
+           
+        break
+
+
+    pdb.set_trace()
 
 
 def copyImg():
     
     ppath_to_dir = INPUT_DIR/"photos"
+    ppath_to_new_photo_dir = INPUT_DIR/"new_photos"
+    os.makedirs(ppath_to_new_photo_dir, exist_ok=True)
+
     
     df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
     #print(f"load df_train : {df_train.shape}")
@@ -29,7 +77,7 @@ def copyImg():
     for index, row in df_train.iterrows():
         target_num = row["target"]
         ppath_to_image = ppath_to_dir / row["image_name"]
-        img = Image.open(ppath_to_img)
+        img = Image.open(ppath_to_image)
         
         # pp_dir = ppath_to_dir / f"train/{target_num}"
         # os.makedirs(pp_dir, exist_ok=True)
@@ -43,8 +91,17 @@ def copyImg():
         new_pp = pp_dir / row["image_name"]
 
         salient_img = getSaliencyImg(str(ppath_to_image), salient_type="SR")
-        cv2.imwrite(str(new_pp), salient_img)
-        #pdb.set_trace()
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}_salient.jpg"), (salient_img * 255).astype("uint8"))
+
+
+        img = cv2.imread(str(ppath_to_image))
+        dst, dst_salient = getCenteringImgFromSaliencyImg(img, salient_img)
+
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}_center_img.jpg"), dst)
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}.jpg"), img)
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}_center_salient_img.jpg"), (dst_salient * 255).astype("uint8"))
+
+        
         
     for index, row in df_test.iterrows():
         
@@ -55,6 +112,18 @@ def copyImg():
         
         new_pp = pp_dir / row["image_name"]
         shutil.copy(ppath_to_image, new_pp)
+
+        salient_img = getSaliencyImg(str(ppath_to_image), salient_type="SR")
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}_salient.jpg"), (salient_img * 255).astype("uint8"))
+
+
+        img = cv2.imread(str(ppath_to_image))
+        dst, dst_salient = getCenteringImgFromSaliencyImg(img, salient_img)
+
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}_center_img.jpg"), dst)
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}.jpg"), img)
+        cv2.imwrite(str(ppath_to_new_photo_dir / f"{index}_center_salient_img.jpg"), (dst_salient * 255).astype("uint8"))
+
         
 def drop_art_series(df_train):
 
@@ -157,7 +226,58 @@ def lgb_prepro():
 
     df_oof.to_pickle(PROC_DIR/"df_proc_train_lgb.pkl")
     df_sub.to_pickle(PROC_DIR/"df_proc_test_lgb.pkl")
+
+def force_continuous(prob_val, alpha=0.8):
+
+    
+    #prob_val = numpy_normalize(prob_val**alpha)
+    return np.sum(prob_val*np.arange(4), axis=1)
         
+def round_by_class_pro():
+
+    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
+    df_train = drop_art_series(df_train)
+    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test_nn.pkl')
+
+    sub_name = "20210721-104210_20210721_104340_SimpleStackingWrapper--0.656662--"
+    df_oof = pd.read_csv(OUTPUT_DIR/f"{sub_name}_oof.csv")
+    if "object_id" in df_oof.columns:
+        df_oof = df_oof.set_index("object_id")
+    elif "index" in df_oof.columns:
+        df_oof = df_oof.set_index("index")
+        df_oof.index.name = "object_id"
+    
+    df_sub = pd.read_csv(OUTPUT_DIR/f"{sub_name}_submission.csv")
+    df_sub.index = df_test.index
+
+    sub_cl_name = "20210721-110813_20210721_144921_multiLabelNet--0.824911--"
+    df_oof_cl = pd.read_csv(OUTPUT_DIR/f"{sub_cl_name}_oof.csv")
+    if "object_id" in df_oof_cl.columns:
+        df_oof_cl = df_oof_cl.set_index("object_id")
+    elif "index" in df_oof_cl.columns:
+        df_oof_cl = df_oof_cl.set_index("index")
+        df_oof_cl.index.name = "object_id"
+
+    df_sub_cl = pd.read_csv(OUTPUT_DIR/f"{sub_cl_name}_submission.csv")
+    df_sub_cl.index = df_test.index
+
+    df_oof["target_prob"] = df_oof_cl["target_prob"]
+    df_oof["target_int"] = df_oof_cl["target_int"]
+
+    df_oof["target"] = [c if p>=0.9 else r for r, c, p in zip(df_oof["target"], df_oof["target_int"], df_oof["target_prob"])]
+    df_sub["target"] = [c if p>=0.9 else r for r, c, p in zip(df_sub["target"], df_sub_cl["target_int"], df_sub_cl["target_prob"])]
+
+    df_train["oof"] =  df_oof["target"]
+    from sklearn.metrics import mean_squared_error
+    rmse = np.sqrt(mean_squared_error(y_true=df_train["target"].values, y_pred=df_train["oof"].values))
+
+    print(f"new rmse : {rmse}")
+    df_oof.to_csv(OUTPUT_DIR/f"round_{rmse}_{sub_name}_oof.csv")
+    df_sub.to_csv(OUTPUT_DIR/f"round_{rmse}_{sub_name}_submission.csv", index=False)
+
+
+
+    
 if __name__ == '__main__':
     
-    proc_old_oof()
+    round_by_class_pro()

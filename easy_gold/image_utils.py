@@ -96,4 +96,25 @@ def getSaliencyImg(path_to_image, salient_type="SR"):
 
 
     return saliencyMap
+
+def getCenteringImgFromSaliencyImg(img, saliency_img):
+
+    img_h, img_w = img.shape[:2]
+    img_center_h = img_h // 2
+    img_center_w = img_w // 2
+
+    salient_pt_h, salient_pt_w = np.unravel_index(np.argmax(saliency_img), saliency_img.shape)
+    
+    offset_x = img_center_w - salient_pt_w
+    offset_y = img_center_h - salient_pt_h
+
+    mat = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+    dst = cv2.warpAffine(img, mat,(img_w,img_h))
+    dst_salient = cv2.warpAffine(saliency_img, mat,(img_w,img_h))
+
+    #pdb.set_trace()
+
+    return dst, dst_salient
+
+
     

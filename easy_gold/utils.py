@@ -1590,6 +1590,10 @@ def searchCheckptFile(ppath_to_save_dir, ppath_to_model, prefix):
     #multiLabelNet_train_model-v4.ckpt
 
     return ppath_to_save_dir/ckpt_name
+
+def numpy_normalize(v):
+
+    return v/np.linalg.norm(v)
     
 if __name__ == '__main__':
     TestReduceALL()

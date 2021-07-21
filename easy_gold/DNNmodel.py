@@ -586,11 +586,11 @@ class myMultilabelNet(PytorchLightningModelBase):
         self.material_weight = material_weight
         self.base_name = base_name
 
-
+        num_classes=128 if "vit" in base_name else 0
         # # prepare backbone
         if hasattr(timm.models, base_name):
             base_model = timm.create_model(
-                base_name, num_classes=0, pretrained=False, in_chans=in_channels)
+                base_name, num_classes=num_classes, pretrained=False, in_chans=in_channels)
             in_features = base_model.num_features
             print("load imagenet pretrained:", pretrained)
         else:
@@ -599,15 +599,19 @@ class myMultilabelNet(PytorchLightningModelBase):
         self.backbone = base_model
         
 
-        
+        print(self.backbone)
         if "vit" in base_name:
-            self.backbone.patch_embed = ConvEmbed(in_chans=in_channels, embed_dim=384)
-            self.backbone.blocks = self.backbone.blocks[:-1] 
+            self.backbone.patch_embed = ConvEmbed(in_chans=in_channels, embed_dim=768)
+            self.backbone.blocks = self.backbone.blocks[:-1]
+
+            dim_mlp = self.backbone.head.weight.shape[1]
+            self.backbone.head = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.backbone.head)
         #pdb.set_trace()
 
         print(self.backbone)
         print(f"{base_name}: {in_features}")
 
+        in_features=128
         self.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
         # self.classifier = nn.Sequential(
         #         nn.Linear(in_features, in_features),
@@ -624,21 +628,25 @@ class myMultilabelNet(PytorchLightningModelBase):
 
     def loadBackbone(self, ppath_to_backbone_dir, fold_num):
         
-        prefix = f"fold_{fold_num}__iter_"
-        name_list = list(ppath_to_backbone_dir.glob(f'model__{prefix}*.pkl'))
-        if len(name_list)==0:
-            print(f'[ERROR] Pretrained nn model was NOT EXITS! : {prefix}')
-            return -1
-        ppath_to_model = name_list[0]
+        if 0:
+            prefix = f"fold_{fold_num}__iter_"
+            name_list = list(ppath_to_backbone_dir.glob(f'model__{prefix}*.pkl'))
+            if len(name_list)==0:
+                print(f'[ERROR] Pretrained nn model was NOT EXITS! : {prefix}')
+                return -1
+            ppath_to_model = name_list[0]
 
-        prefix=f"fold_{fold_num}"
-        ppath_to_ckpt_model = searchCheckptFile(ppath_to_backbone_dir, ppath_to_model, prefix)
+            prefix=f"fold_{fold_num}"
+            ppath_to_ckpt_model = searchCheckptFile(ppath_to_backbone_dir, ppath_to_model, prefix)
 
-        #ppath_to_model=PATH_TO_MODEL_DIR/"20210717-103724/model__fold_0__iter_91__20210717-103724__SSL_Wrapper.pkl"
+
+        ppath_to_ckpt_model=PATH_TO_MODEL_DIR/"checkpoint_0091.pth.tar"
         #ppath_to_model= ppath_to_backbone_dir /PATH_TO_MODEL_DIR/"20210717-143003/model__fold_0__iter_98__20210717-143003__SSL_Wrapper.pkl"
         #tmp_dict = torch.load(str(ppath_to_model))
         tmp_dict = torch.load(str(ppath_to_ckpt_model))["state_dict"]
-        backbone_dict = {k.replace("backbone.", ""):v for k, v in tmp_dict.items() if "backbone" in k }
+        
+        #backbone_dict = {k.replace("backbone.", ""):v for k, v in tmp_dict.items() if "backbone" in k }
+        backbone_dict = {k.replace("module.encoder_q.", ""):v for k, v in tmp_dict.items() if "module.encoder_q." in k }
         self.backbone.load_state_dict(backbone_dict)
 
         print(f"load backbone : {ppath_to_ckpt_model}")
@@ -653,7 +661,10 @@ class myMultilabelNet(PytorchLightningModelBase):
         
 
         out = self.backbone(img)
+        #(f"out : {out.shape}")
         out = self.classifier(out)
+        #print(f"out2 : {out.shape}")
+
 
         #out_target = self.fc_reg(out)
         #out_tech = self.fc_tech(out)
@@ -679,8 +690,7 @@ class myMultilabelNet(PytorchLightningModelBase):
 
         #print(f"y_true : {y_true.shape}")
         #print(f"y_pred : {y_pred.shape}")
-        # print(f"weight : {weight.shape}")
-        #pdb.set_trace()
+        #print(f"weight : {weight.shape}")
 
         if self.regression_flag:
 
@@ -689,13 +699,18 @@ class myMultilabelNet(PytorchLightningModelBase):
             else:
                 loss_target =  weighted_mse_loss(input=y_pred[:, 0].float(), target=y_true[:, 0].float(), weight=weight.float())
         else:
-            loss_target =  nn.CrossEntropyLoss()(y_pred[:, 0], y_true.long())
+            #pdb.set_trace()
+            #y_true = y_true.squeeze()
+            #loss_target =  nn.CrossEntropyLoss()(y_pred, y_true.long())
+            loss = - (1.0-y_true)* nn.LogSoftmax(dim=1)(1-y_pred)
+            loss_target = (loss* weight).sum() #(dim=1).mean()
+            
         
         tech_weight = None#torch.tensor(self.tech_weight,device=y_pred.device) if self.tech_weight is not None else None
         material_weight = None#torch.tensor(self.material_weight,device=y_pred.device)if self.material_weight is not None else None
 
         loss_tech=0
-        if y_true.shape[1] > 1:
+        if (len(y_true.shape) > 1) and (y_true.shape[1] > 1):
             num_tech = 3
             loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
             #loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
@@ -709,10 +724,14 @@ class myMultilabelNet(PytorchLightningModelBase):
         #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
         loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
 
-        out_target = out[:, 0]
-        out_tech = torch.sigmoid(out[:, 1:])
-        #pdb.set_trace()
-        out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+
+        if self.regression_flag:
+            out_target = out[:, 0]
+            out_tech = torch.sigmoid(out[:, 1:])
+            #pdb.set_trace()
+            out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+        else:
+            out = F.softmax(out, dim=1)
 
         
 
@@ -738,10 +757,13 @@ class myMultilabelNet(PytorchLightningModelBase):
 
         loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
 
-        out_target = out[:, 0]
-        out_tech = torch.sigmoid(out[:, 1:])
-        #pdb.set_trace()
-        out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+        if self.regression_flag:
+            out_target = out[:, 0]
+            out_tech = torch.sigmoid(out[:, 1:])
+            #pdb.set_trace()
+            out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+        else:
+            out = F.softmax(out, dim=1)
 
         val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
         
@@ -762,13 +784,25 @@ class myMultilabelNet(PytorchLightningModelBase):
 
     def test_step(self, batch, batch_idx):
         out = self.forward(batch)
-        out_target = out[:, 0]
-        out_tech = torch.sigmoid(out[:, 1:])
-        #pdb.set_trace()
-        out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+
+        if self.regression_flag:
+            out_target = out[:, 0]
+            out_tech = torch.sigmoid(out[:, 1:])
+            #pdb.set_trace()
+            out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+
+        else:
+            out = F.softmax(out, dim=1)
 
         #pdb.set_trace()
         return {'out': out}
+
+
+    # def test_epoch_end(self, outputs):
+        
+    #     self.final_preds = torch.cat([o['out'] for o in outputs]).data.cpu().detach().numpy().reshape(-1, 1)
+
+    #     #pdb.set_trace()  
 
 
     def setParams(self, _params):

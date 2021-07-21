@@ -192,6 +192,7 @@ class Averaging_Wrapper(object):
             
             initial_rate_list = [0.5] * X_train.shape[1]
             loss_partial = partial(calc_loss_f, df_input_X=X_train, y_true=y_train)
+           
             opt_result = sp.optimize.minimize(loss_partial, initial_rate_list, method='nelder-mead')
             
             self.rate_list_ = opt_result["x"].tolist()
@@ -577,7 +578,7 @@ class PytrochLightningBase():
         
 
         batch_size=self.edit_params["batch_size"] #if oof_flag else 1 #
-        dummy_y = pd.DataFrame(np.zeros(X_test.shape), index=X_test.index)
+        dummy_y = pd.DataFrame(np.zeros((X_test.shape[0], 1)), index=X_test.index)
         data_set_test = self.edit_params["dataset_class"](X_test, dummy_y, self.edit_params["dataset_params"], train_flag=(num_tta>1))
         dataloader_test = torch.utils.data.DataLoader(data_set_test, batch_size=batch_size, shuffle=False, collate_fn=self.edit_params["collate_fn"],num_workers=self.edit_params["num_workers"])
         
@@ -673,16 +674,16 @@ class PytrochLightningBase():
         return 0
 
 class SSL_Wrapper(PytrochLightningBase):
-    def __init__(self, img_size, num_out, regression_flag):
+    def __init__(self, img_size, num_out, regression_flag, salient_flag):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = SupConDataset
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {"img_size":img_size}
-        
-        self.model = SupConModel(base_name="vit_small_patch16_384") #num_out=num_out, regression_flag=regression_flag)
+        self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag}
+        in_channels=4 if salient_flag else 3
+        self.model = SupConModel(base_name="efficientnet_b1", in_channels=in_channels,) #num_out=num_out, regression_flag=regression_flag)
 
 class ResNet_Wrapper(PytrochLightningBase):
     def __init__(self, img_size, num_out, regression_flag):
@@ -705,11 +706,11 @@ class multiLabelNet(PytrochLightningBase):
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag}
+        self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag, "regression_flag":regression_flag}
         
         in_channels=4 if salient_flag else 3
-        #'resnet18', 
-        self.model = myMultilabelNet(base_name="efficientnet_b1", in_channels=in_channels,num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        #'efficientnet_b1', "resnet18"
+        self.model = myMultilabelNet(base_name="vit_small_patch16_224", in_channels=in_channels,num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
 
         
@@ -1879,7 +1880,7 @@ class LGBWrapper_Base(object):
                 "deal_numpy":False,
                 "first_metric_only": True,
                 
-                'max_depth': 2,
+                'max_depth': 3,
                 #'max_bin': 300,
                 #'bagging_fraction': 0.9,
                 #'bagging_freq': 1, 
@@ -1888,7 +1889,7 @@ class LGBWrapper_Base(object):
                 #'min_data_per_leaf': 2,
                 "min_child_samples":8,
                 
-                'num_leaves': 4,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
+                'num_leaves': 8,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
                 'lambda_l1': 0.5,
                 'lambda_l2': 0.5,
                 
@@ -2054,17 +2055,19 @@ class LGBWrapper_regr(LGBWrapper_Base):
             y_train = y_train.iloc[:,0]
         
         
+        
         if y_valid is not None:
             if isinstance(y_valid, pd.DataFrame):
                 assert y_valid.shape[1] == 1
                 y_valid = y_valid.iloc[:,0]
+        
                 
         if y_holdout is not None:
             if isinstance(y_holdout, pd.DataFrame):
                 assert y_holdout.shape[1] == 1
                 y_holdout = y_holdout.iloc[:,0]
                 
-        
+        #pdb.set_trace()
         super().fit(X_train=X_train, y_train=y_train, X_valid=X_valid, y_valid=y_valid, X_holdout=X_holdout, y_holdout=y_holdout, params=params)
 
 

@@ -79,8 +79,13 @@ class SupConDataset(torch.utils.data.Dataset):
         self.df_train_y = df_train_y
         #self.transform = dataset_params["transform"]
         self.img_size = dataset_params["img_size"]
+        self.salient_flag = dataset_params["salient_flag"]
         self.train_flag = train_flag
         
+
+        if self.salient_flag:
+            IMG_MEAN = [0.485, 0.456, 0.406, 0.5]
+            IMG_STD = [0.229, 0.224, 0.225, 0.5]
         if train_flag:
             comp_list = [
                             A.Resize(p=1.0, height=self.img_size, width=self.img_size),
@@ -109,6 +114,15 @@ class SupConDataset(torch.utils.data.Dataset):
         ppath_to_img = INPUT_DIR/f"photos/{image_name}"
         img = Image.open(ppath_to_img)
         img = np.array(img)
+
+        if self.salient_flag:
+            
+            salient_img = getSaliencyImg(path_to_image=str(ppath_to_img), salient_type="SR")
+            
+            #print(f"salient_img {idx}* {salient_img.shape}")
+            #print(f"img {idx}* {np.array(img).shape}")
+            img = np.dstack([img, salient_img])
+            #print(f"after img {idx} * {img.shape}")
         img_1 = self.transform(image=img)["image"]
         img_2 = self.transform(image=img)["image"]
         #img = [img_1, img_2]
@@ -127,15 +141,17 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         self.df_train_y = df_train_y
         self.img_size = dataset_params["img_size"]
         self.salient_flag = dataset_params["salient_flag"]
+        self.regression_flag = dataset_params["regression_flag"]
 
-        if self.salient_flag:
-            IMG_MEAN = [0.485, 0.456, 0.406, 0.5]
-            IMG_STD = [0.229, 0.224, 0.225, 0.5]
-        
+        #if self.salient_flag:
+        #    IMG_MEAN = [0.485, 0.456, 0.406, 0.5] #, 0.485, 0.456, 0.406, 0.5]
+        #    IMG_STD = [0.229, 0.224, 0.225, 0.5] #, 0.229, 0.224, 0.225, 0.5]
+        IMG_MEAN = [0.485, 0.456, 0.406]
+        IMG_STD = [0.229, 0.224, 0.225]
         if train_flag:
             comp_list = [
                             A.Resize(p=1.0, height=self.img_size, width=self.img_size),
-                            A.RandomResizedCrop(p=1.0, height=self.img_size, width=self.img_size, scale=(0.5, 1.0)),
+                            #A.RandomResizedCrop(p=1.0, height=self.img_size, width=self.img_size, scale=(0.5, 1.0)),
                             A.HorizontalFlip(p=0.5),
                             A.VerticalFlip(p=0.5),
                             #A.HueSaturationValue(p=0.8),
@@ -150,6 +166,9 @@ class MyDatasetResNet(torch.utils.data.Dataset):
             
             ]
         self.transformer = A.Compose(comp_list)
+
+        self.distance_matrix = np.array([[0,1,4,9],[1,0,1,4],[4,1,0,1],[9,4,1,0]])
+        self.label_matrix = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
         
         #size = (224, 224)
         #size = (300, 300)
@@ -184,15 +203,26 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         image_name = self.df_train_X.iloc[idx]['image_name']
         ppath_to_img = INPUT_DIR/f"photos/{image_name}"
         img = Image.open(ppath_to_img)
+        img = np.array(img)
         
         if self.salient_flag:
-            img = np.array(img)
-            salient_img = getSaliencyImg(path_to_image=str(ppath_to_img), salient_type="SR")
+            #img = np.array(img)
+            #salient_img = getSaliencyImg(path_to_image=str(ppath_to_img), salient_type="SR")
+            #img = np.dstack([img, salient_img])
+
             
-            #print(f"salient_img {idx}* {salient_img.shape}")
-            #print(f"img {idx}* {np.array(img).shape}")
-            img = np.dstack([img, salient_img])
-            #print(f"after img {idx} * {img.shape}")
+            index = self.df_train_X.index[idx]
+            ppath_to_new_dir = INPUT_DIR/f"new_photos"
+
+            #img = np.array(Image.open(ppath_to_new_dir/f"{index}.jpg"))
+            #saliency_img = np.array(Image.open(ppath_to_new_dir/f"{index}_salient.jpg"))
+            img_center = np.array(Image.open(ppath_to_new_dir/f"{index}_center_img.jpg"))
+            saliency_img_center = np.array(Image.open(ppath_to_new_dir/f"{index}_center_salient_img.jpg"))
+            #img = np.dstack([img, saliency_img, img_center, saliency_img_center])
+            img = np.dstack([img_center, saliency_img_center])
+            
+            
+            
             
 
             #.set_trace()
@@ -201,8 +231,14 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         img = self.transformer(image=img)["image"]
 
         w = self.df_train_X.iloc[idx]['loss_weight']
+
+        label = self.df_train_y.iloc[idx].values#[0]
+        if not self.regression_flag:
+            #print(f"label : {label}")
+            w = self.distance_matrix[int(label), :]
+            label = self.label_matrix[int(label), :]
         
-        return [img, w], self.df_train_y.iloc[idx].values#[0]
+        return [img, w],label
 
 
 class SequenceTransformer(object):

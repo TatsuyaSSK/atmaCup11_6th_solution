@@ -795,7 +795,7 @@ class myMultilabelNet(PytorchLightningModelBase):
         print(self.backbone)
         print(f"{base_name}: {in_features}")
 
-        in_features=128
+        #in_features=128
         self.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
         # self.classifier = nn.Sequential(
         #         nn.Linear(in_features, in_features),
@@ -1024,9 +1024,9 @@ class myResNet(PytorchLightningModelBase):
         self.base_name = base_name
         self.backbone = torch_models.__dict__[base_name](pretrained=False)
         self.backbone.fc = nn.Linear(in_features=512, out_features=num_out, bias=True)
-        for name, param in self.backbone.named_parameters():
-            if name not in ['fc.weight', 'fc.bias']:
-                param.requires_grad = False
+        #for name, param in self.backbone.named_parameters():
+        #    if name not in ['fc.weight', 'fc.bias']:
+        #        param.requires_grad = False
 
 
         print(self.backbone)
@@ -1092,21 +1092,118 @@ class myResNet(PytorchLightningModelBase):
         out = self._forward(batch)
         return out
 
+    
     def criterion(self, y_true, y_pred, weight=None):
 
-        # print(f"y_true : {y_true.shape}")
-        # print(f"y_pred : {y_pred.shape}")
-        # print(f"weight : {weight.shape}")
-        #pdb.set_trace()
+        #print(f"y_true : {y_true.shape}")
+        #print(f"y_pred : {y_pred.shape}")
+        #print(f"weight : {weight.shape}")
 
         if self.regression_flag:
 
             if weight is None:
-                return nn.MSELoss()(y_pred.squeeze().float(), y_true.float())
+                loss_target =  nn.MSELoss()(y_pred[:, 0].float(), y_true[:, 0].float())
             else:
-                return weighted_mse_loss(input=y_pred.squeeze().float(), target=y_true.float(), weight=weight.float())
+                loss_target =  weighted_mse_loss(input=y_pred[:, 0].float(), target=y_true[:, 0].float(), weight=weight.float())
         else:
-            return nn.CrossEntropyLoss()(y_pred, y_true.long())
+            #pdb.set_trace()
+            #y_true = y_true.squeeze()
+            #loss_target =  nn.CrossEntropyLoss()(y_pred, y_true.long())
+            loss = - (1.0-y_true)* nn.LogSoftmax(dim=1)(1-y_pred)
+            loss_target = (loss* weight).sum() #(dim=1).mean()
+            
+        
+        tech_weight = None#torch.tensor(self.tech_weight,device=y_pred.device) if self.tech_weight is not None else None
+        material_weight = None#torch.tensor(self.material_weight,device=y_pred.device)if self.material_weight is not None else None
+
+        loss_tech=0
+        if (len(y_true.shape) > 1) and (y_true.shape[1] > 1):
+            num_tech = 3
+            loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
+            #loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
+
+        return loss_target +  loss_tech #+ loss_material /3.0
+
+    # def criterion(self, y_true, y_pred, weight=None):
+
+    #     # print(f"y_true : {y_true.shape}")
+    #     # print(f"y_pred : {y_pred.shape}")
+    #     # print(f"weight : {weight.shape}")
+    #     #pdb.set_trace()
+
+    #     if self.regression_flag:
+
+    #         if weight is None:
+    #             return nn.MSELoss()(y_pred.squeeze().float(), y_true.float())
+    #         else:
+    #             return weighted_mse_loss(input=y_pred.squeeze().float(), target=y_true.float(), weight=weight.float())
+    #     else:
+    #         return nn.CrossEntropyLoss()(y_pred, y_true.long())
+
+    def training_step(self, batch, batch_idx):
+        
+        out = self.forward(batch)
+
+        #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
+
+
+        if self.regression_flag:
+            out_target = out[:, 0]
+            out_tech = torch.sigmoid(out[:, 1:])
+            #pdb.set_trace()
+            out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+        else:
+            out = F.softmax(out, dim=1)
+
+        
+
+        train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+        
+
+
+        
+        self.log('loss', loss, logger=False)
+        ret = {'loss': loss}
+
+        for k, v in train_batch_eval_score_dict.items():
+            self.log(f"train_{k}", v, logger=False)
+            ret[f"{k}"] = v
+
+        return ret
+
+
+
+    def validation_step(self, batch, batch_idx):
+
+        out = self.forward(batch)
+
+        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
+
+        if self.regression_flag:
+            out_target = out[:, 0]
+            out_tech = torch.sigmoid(out[:, 1:])
+            #pdb.set_trace()
+            out = torch.cat([out_target.unsqueeze(1), out_tech], axis=-1)
+        else:
+            out = F.softmax(out, dim=1)
+
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=self.eval_metric_func_dict)
+        
+
+
+        self.log('val_loss', loss, logger=False)
+        ret = {'val_loss': loss}
+
+        for k, v in val_batch_eval_score_dict.items():
+            self.log(f"val_{k}", v, logger=False)
+            ret[f"{k}"] = v
+        
+
+        #self.log('val_loss', loss)
+
+
+        return ret
 
     def test_step(self, batch, batch_idx):
         out = self._forward(batch)
@@ -1118,7 +1215,7 @@ class myResNet(PytorchLightningModelBase):
 
     def test_epoch_end(self, outputs):
         
-        self.final_preds = torch.cat([o['out'] for o in outputs]).data.cpu().detach().numpy().reshape(-1, 1)
+        self.final_preds = torch.cat([o['out'] for o in outputs]).data.cpu().detach().numpy()
 
         #pdb.set_trace()  
 

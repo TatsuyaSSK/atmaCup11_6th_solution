@@ -206,6 +206,40 @@ class Preprocessor:
 
     #     return df
 
+    # def fe__image_hash(self, df):
+
+    #     hashes = []
+    #     df["image_hash"] = np.nan
+    #     for object_id, rows in df.iterrows():
+    #         ppath_to_img = INPUT_DIR/f"photos/{object_id}.jpg"
+    #         img = Image.open(ppath_to_img)
+            
+    #         hash = getImageHash(img)
+    #         hashes.append(hash)
+
+    #         #df.loc[object_id, "image_hash"] = hash
+        
+    #     hashes_all = np.array(hashes).astype(int)
+    #     #hashes_all = torch.Tensor(hashes_all.astype(int)).cuda()
+
+    #     threhold=0.85
+    #     for i in range(hashes_all.shape[0]):
+
+    #         check = (hashes_all[i] == hashes_all).sum(axis=1)/256 
+
+    #         indices1 = np.where(check > threhold)
+    #         dup =  [idx for idx in indices1[0].tolist() if idx != i]
+
+    #         obj_id = df.iloc[i].name
+    #         df.loc[obj_id, "image_hash"] = dup
+    #         pdb.set_trace()
+
+            
+
+    #     sims = np.array([(hashes_all[i] == hashes_all).sum(dim=1).cpu().numpy()/256 for i in range(hashes_all.shape[0])])
+
+        # return df
+
     def fe__year_bin50(self, df):
 
         df["year_bin50"] = df["sorting_date"].map(lambda x: (x-1)//50 -28)
@@ -290,6 +324,9 @@ class Preprocessor:
 
         return df
         
+    
+
+
         
     def proc(self, params):
         

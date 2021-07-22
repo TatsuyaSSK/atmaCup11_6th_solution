@@ -276,8 +276,49 @@ def round_by_class_pro():
     df_sub.to_csv(OUTPUT_DIR/f"round_{rmse}_{sub_name}_submission.csv", index=False)
 
 
+def checkImaghash():
 
+    df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_nn.pkl')
+    df_train = drop_art_series(df_train)
+    df_test = pd.read_pickle(PROC_DIR / f'df_proc_test_nn.pkl')
+
+    df = pd.concat([df_train, df_test])
+
+    print(df.shape)
+
+    hashes = []
+    object_ids = []
+    for object_id, rows in df.iterrows():
+        ppath_to_img = INPUT_DIR/f"photos/{object_id}.jpg"
+        img = Image.open(ppath_to_img)
+        
+        hash = getImageHash(img)
+        hashes.append(hash)
+        object_ids.append(object_id)
+
+        #df.loc[object_id, "image_hash"] = hash
+    
+    hashes_all = np.array(hashes).astype(int)
+    #hashes_all = torch.Tensor(hashes_all.astype(int)).cuda()
+    sims = np.array([(hashes_all[i] == hashes_all).sum(axis=1)/256 for i in range(hashes_all.shape[0])])
+
+    threhold = 0.89
+
+    indices1 = np.where(sims > threhold)
+    indices2 = np.where(indices1[0] != indices1[1])
+    object_ids1 = [object_ids[i] for i in indices1[0][indices2]]
+    object_ids2 = [object_ids[i] for i in indices1[1][indices2]]
+    dups = {tuple(sorted([object_id1, object_id2])):True for object_id1, object_id2 in zip(object_ids1, object_ids2)}
+    print(f'found {len(dups)} duplicates')
+    pdb.set_trace()
+
+    f = open(PROC_DIR/'dups.npy')
+    pickle.dump(dups,f)
+
+    np.save(PROC_DIR/'dups.npy', dups)
+
+    dups = np.load(PROC_DIR/'dups.npy', allow_pickle='TRUE')
     
 if __name__ == '__main__':
     
-    round_by_class_pro()
+    checkImaghash()

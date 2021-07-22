@@ -7,6 +7,7 @@ Created on Sat Jul 10 02:41:05 2021
 
 from utils import *
 from PIL import Image
+import imagehash
 import cv2
 
 def getImageStatistics(df, ppath_to_dir, ppath_to_label_dir=None):
@@ -118,3 +119,16 @@ def getCenteringImgFromSaliencyImg(img, saliency_img):
 
 
     
+def getImageHash(pil_img):
+    funcs = [
+        imagehash.average_hash,
+        imagehash.phash,
+        imagehash.dhash,
+        imagehash.whash,
+    ]
+
+    hash = np.array([f(pil_img).hash for f in funcs]).reshape(256)
+
+    #pdb.set_trace()
+
+    return hash

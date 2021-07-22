@@ -684,18 +684,18 @@ class SSL_Wrapper(PytrochLightningBase):
         self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag}
         in_channels=4 if salient_flag else 3
         #self.model = SupConModel(base_name="resnet18", in_channels=in_channels,) #num_out=num_out, regression_flag=regression_flag)
-        self.model = SimSiam(base_name="resnet18", in_channels=in_channels,)
+        self.model = SSLsimSiam(base_name="resnet18", in_channels=in_channels,)
 class ResNet_Wrapper(PytrochLightningBase):
-    def __init__(self, img_size, num_out, regression_flag):
+    def __init__(self, img_size, num_out, regression_flag, salient_flag):
         
         super().__init__()
         
         self.initial_params["dataset_class"] = MyDatasetResNet
         self.initial_params["collate_fn"] = None #collate_fn_Transformer
 
-        self.initial_params["dataset_params"] =  {"img_size":img_size}
+        self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag, "regression_flag":regression_flag}
         
-        self.model = myResNet(num_out=num_out, regression_flag=regression_flag)
+        self.model = myResNet(base_name="resnet18", num_out=num_out, regression_flag=regression_flag)
 
 
 class multiLabelNet(PytrochLightningBase):

@@ -86,14 +86,17 @@ class SupConDataset(torch.utils.data.Dataset):
         if self.salient_flag:
             IMG_MEAN = [0.485, 0.456, 0.406, 0.5]
             IMG_STD = [0.229, 0.224, 0.225, 0.5]
+        else:
+            IMG_MEAN = [0.485, 0.456, 0.406]
+            IMG_STD = [0.229, 0.224, 0.225]
         if train_flag:
             comp_list = [
                             A.Resize(p=1.0, height=self.img_size, width=self.img_size),
                             A.RandomResizedCrop(p=1.0, height=self.img_size, width=self.img_size, scale=(0.5, 1.0)),
                             A.HorizontalFlip(p=0.5),
                             A.VerticalFlip(p=0.5),
-                            #A.HueSaturationValue(p=0.8),
-                            #A.ToGray(p=0.2),
+                            A.HueSaturationValue(p=0.8),
+                            A.ToGray(p=0.2),
                             A.Normalize(mean=IMG_MEAN, std=IMG_STD),
                             ToTensorV2(always_apply=True),
                             ]

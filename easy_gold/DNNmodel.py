@@ -12,9 +12,10 @@ from abc import ABCMeta, abstractmethod
 import pytorch_lightning as pl
 
 from torchvision.models import resnet34, resnet18, vgg16
+import torchvision.models as torch_models
 
 import timm
-import lightly
+
 
 from sklearn import random_projection
 from DataSet import *
@@ -393,8 +394,62 @@ class PytorchLightningModelBase(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         return optimizer
     
+class SimSiam(nn.Module):
+    """
+    Build a SimSiam model.
+    """
+    def __init__(self, base_encoder, dim=2048, pred_dim=512):
+        """
+        dim: feature dimension (default: 2048)
+        pred_dim: hidden dimension of the predictor (default: 512)
+        """
+        super(SimSiam, self).__init__()
 
-class SimSiam(PytorchLightningModelBase):
+        # create the encoder
+        # num_classes is the output fc dimension, zero-initialize last BNs
+        self.encoder = base_encoder(num_classes=dim, zero_init_residual=True, pretrained=False)
+
+        # build a 3-layer projector
+        prev_dim = self.encoder.fc.weight.shape[1]
+        self.encoder.fc = nn.Sequential(nn.Linear(prev_dim, prev_dim, bias=False),
+                                        nn.BatchNorm1d(prev_dim),
+                                        nn.ReLU(inplace=True), # first layer
+                                        nn.Linear(prev_dim, prev_dim, bias=False),
+                                        nn.BatchNorm1d(prev_dim),
+                                        nn.ReLU(inplace=True), # second layer
+                                        self.encoder.fc,
+                                        nn.BatchNorm1d(dim, affine=False)) # output layer
+        self.encoder.fc[6].bias.requires_grad = False # hack: not use bias as it is followed by BN
+
+        print(self.encoder)
+        #pdb.set_trace()
+
+        # build a 2-layer predictor
+        self.predictor = nn.Sequential(nn.Linear(dim, pred_dim, bias=False),
+                                        nn.BatchNorm1d(pred_dim),
+                                        nn.ReLU(inplace=True), # hidden layer
+                                        nn.Linear(pred_dim, dim)) # output layer
+
+    def forward(self, x1, x2):
+        """
+        Input:
+            x1: first views of images
+            x2: second views of images
+        Output:
+            p1, p2, z1, z2: predictors and targets of the network
+            See Sec. 3 of https://arxiv.org/abs/2011.10566 for detailed notations
+        """
+
+        # compute features for one view
+        z1 = self.encoder(x1) # NxC
+        z2 = self.encoder(x2) # NxC
+
+        p1 = self.predictor(z1) # NxC
+        p2 = self.predictor(z2) # NxC
+
+        return p1, p2, z1.detach(), z2.detach()
+
+class SSLsimSiam(PytorchLightningModelBase):
 
     def __init__(
         self, base_name: str, pretrained=False,
@@ -402,84 +457,71 @@ class SimSiam(PytorchLightningModelBase):
     ):
 
         """Initialize"""
-        super(SimSiam, self).__init__()
+        super(SSLsimSiam, self).__init__()
 
 
-        self.avg_loss = 0
-        self.avg_output_std = 0
+        model_names = sorted(name for name in torch_models.__dict__
+                        if name.islower() and not name.startswith("__")
+                        and callable(torch_models.__dict__[name]))
 
         self.base_name = base_name
+        self.model = SimSiam(torch_models.__dict__[base_name])
 
-        # # prepare backbone
-        if hasattr(timm.models, base_name):
-            base_model = timm.create_model(
-                base_name, num_classes=0, pretrained=pretrained, in_chans=in_channels)
-            in_features = base_model.num_features
-            print("load imagenet pretrained:", pretrained)
-        else:
-            raise NotImplementedError
+                                
+                                
 
-        self.backbone = base_model
-        print(self.backbone)
-        print(f"{base_name}: {in_features}")
 
-        self.model = lightly.models.SimSiam(
-                    self.backbone,
-                    num_ftrs=in_features,
-                    proj_hidden_dim=512,
-                    pred_hidden_dim=128,
-                    out_dim=512,
-                    num_mlp_layers=2
-                )
+        # # # prepare backbone
+        # if hasattr(timm.models, base_name):
+        #     base_model = timm.create_model(
+        #         base_name, num_classes=0, pretrained=pretrained, in_chans=in_channels)
+        #     in_features = base_model.num_features
+        #     print("load imagenet pretrained:", pretrained)
+        # else:
+        #     raise NotImplementedError
+
+        # self.backbone = base_model
+        # print(self.backbone)
+        # print(f"{base_name}: {in_features}")
+
+        
 
     def _forward(self, batch):
         
      
         img1 =  batch[0][0]
         img2 =  batch[0][1]
-        y0, y1 = self.model(img1, img2)
+        p1, p2, z1, z2 = self.model(x1=img1, x2=img2)
         
 
-        return y0, y1
+        return p1, p2, z1, z2
 
-    def criterion(self, y0, y1, weight=None):
+    def criterion(self, p1, p2, z1, z2):
 
-        criterion_func = lightly.loss.SymNegCosineSimilarityLoss()
-        loss = criterion_func(y0, y1)
+        criterion_func = nn.CosineSimilarity(dim=1)
+        loss = -(criterion_func(p1, z2).mean() + criterion_func(p2, z1).mean()) * 0.5
 
         return loss
 
-    def calc_avg_loss(self, output, loss):
-
-        output = torch.nn.functional.normalize(output, dim=1)
-
-        output_std = torch.std(output, 0)
-        output_std = output_std.mean()
-
-        # use moving averages to track the loss and standard deviation
-        w = 0.9
-        self.avg_loss = w * self.avg_loss + (1 - w) * loss.item()
-        self.avg_output_std = w * self.avg_output_std + (1 - w) * output_std.item()
+   
 
 
     def training_step(self, batch, batch_idx):
         
-        y0, y1 = self._forward(batch)
+        p1, p2, z1, z2 = self._forward(batch)
+        
 
         #loss = nn.BCEWithLogitsLoss(weight=y_w)(out, y)
-        loss = self.criterion(y0=y0, y1=y1)
+        loss = self.criterion(p1, p2, z1, z2)
 
-        output, _ = y0
-        output = output.detach()
-        self.calc_avg_loss(output, loss)
-        
-        train_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=self.avg_output_std.item().cpu().detach(), eval_metric_func_dict=eval_metric_func_dict)
+
+        train_batch_eval_score_dict= calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=loss.item(), eval_metric_func_dict=self.eval_metric_func_dict)
         
 
 
         
-        self.log('loss', self.avg_loss, logger=False)
-        ret = {'loss': self.avg_loss}
+        self.log('loss', loss, logger=False)
+        ret = {'loss': loss}
 
         for k, v in train_batch_eval_score_dict.items():
             self.log(f"train_{k}", v, logger=False)
@@ -491,16 +533,13 @@ class SimSiam(PytorchLightningModelBase):
 
     def validation_step(self, batch, batch_idx):
 
-        out = self._forward(batch)
+        p1, p2, z1, z2 = self._forward(batch)
+        
+        loss = self.criterion(p1, p2, z1, z2)
 
-        loss = self.criterion(y_pred=out, y_true=batch[-1], weight=batch[0][-1])
 
-        def my_eval_dummy(y_pred, y_true):
-            self.dummy_eval_num+=1
-            return self.dummy_eval_num
-        eval_metric_func_dict= {"eval_dummy":my_eval_dummy}
 
-        val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=out.data.cpu().detach().numpy(), eval_metric_func_dict=eval_metric_func_dict)
+        val_batch_eval_score_dict=calcEvalScoreDict(y_true=batch[-1].data.cpu().detach().numpy(), y_pred=loss.item(), eval_metric_func_dict=self.eval_metric_func_dict)
         
 
 
@@ -516,6 +555,27 @@ class SimSiam(PytorchLightningModelBase):
 
 
         return ret
+
+    def _forward_test(self, batch):
+        img1 =  batch[0][0]
+        img2 =  batch[0][1]
+        p1, p2, z1, z2 = self.model(x1=img1, x2=img2)
+
+        #print(f"p1 : {p1.shape}")
+        
+        feat = p1.squeeze()
+        #
+        projection = random_projection.GaussianRandomProjection(n_components=1)
+        out = projection.fit_transform(feat.cpu())
+        out = torch.tensor(out, device=img1.device)
+        #pdb.set_trace()
+
+        return out
+
+    def test_step(self, batch, batch_idx):
+        out = self._forward_test(batch)
+        #pdb.set_trace()
+        return {'out': out}
 
 class SupConModel(PytorchLightningModelBase):
 
@@ -951,21 +1011,31 @@ class myMultilabelNet(PytorchLightningModelBase):
 
 
 class myResNet(PytorchLightningModelBase):
-    def __init__(self, num_out, regression_flag=True) -> None:
+    def __init__(self, base_name, num_out, regression_flag=True) -> None:
         super().__init__()
         
         self.regression_flag=regression_flag
         self.num_out = num_out
 
-        #self.model = timm.create_model('xception', pretrained=False)
-        #self.model.fc = nn.Linear(in_features=2048, out_features=num_out, bias=True)
-        #self.model.classifier = nn.Linear(in_features=1408, out_features=num_out, bias=True)
-        #
-        #
-        #
+        model_names = sorted(name for name in torch_models.__dict__
+                        if name.islower() and not name.startswith("__")
+                        and callable(torch_models.__dict__[name]))
 
-        self.model = timm.create_model('efficientnet_b1_pruned', pretrained=False)
-        self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
+        self.base_name = base_name
+        self.backbone = torch_models.__dict__[base_name](pretrained=False)
+        self.backbone.fc = nn.Linear(in_features=512, out_features=num_out, bias=True)
+        for name, param in self.backbone.named_parameters():
+            if name not in ['fc.weight', 'fc.bias']:
+                param.requires_grad = False
+
+
+        print(self.backbone)
+
+        self.backbone.fc.weight.data.normal_(mean=0.0, std=0.01)
+        self.backbone.fc.bias.data.zero_()
+        
+        #self.model = timm.create_model('efficientnet_b1_pruned', pretrained=False)
+        #self.model.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
         #print(self.model)
         #pdb.set_trace()
        
@@ -1011,7 +1081,7 @@ class myResNet(PytorchLightningModelBase):
      
         img =  batch[0][0]
         #print(f"img : {img.shape}")
-        out = self.model(img)
+        out = self.backbone(img)
         #out = torch.sigmoid(out)
         #out = torch.clamp(out, 0, 1)
         
@@ -1051,6 +1121,48 @@ class myResNet(PytorchLightningModelBase):
         self.final_preds = torch.cat([o['out'] for o in outputs]).data.cpu().detach().numpy().reshape(-1, 1)
 
         #pdb.set_trace()  
+
+    def setParams(self, _params):
+
+        self.learning_rate = _params["learning_rate"]
+        self.eval_metric_func_dict = _params["eval_metric_func_dict__"]
+        self.monitor=_params["eval_metric"]
+        self.mode=_params['eval_max_or_min']
+
+        self.last_score = -10000000000 if self.mode == "max" else 10000000000
+
+        print("show eval metrics : ")
+        print(self.eval_metric_func_dict)
+
+        if _params["pretrain_model_dir_name"] is not None:
+            ppath_to_backbone_dir = PATH_TO_MODEL_DIR/_params["pretrain_model_dir_name"]
+            self.loadBackbone(ppath_to_backbone_dir, fold_num=_params["fold_n"])
+
+    def loadBackbone(self, ppath_to_backbone_dir, fold_num):
+        
+        prefix = f"fold_{fold_num}__iter_"
+        name_list = list(ppath_to_backbone_dir.glob(f'model__{prefix}*.pkl'))
+        if len(name_list)==0:
+            print(f'[ERROR] Pretrained nn model was NOT EXITS! : {prefix}')
+            return -1
+        ppath_to_model = name_list[0]
+
+        prefix=f"fold_{fold_num}"
+        ppath_to_ckpt_model = searchCheckptFile(ppath_to_backbone_dir, ppath_to_model, prefix)
+
+
+        #ppath_to_ckpt_model=PATH_TO_MODEL_DIR/"checkpoint_0091.pth.tar"
+        #ppath_to_model= ppath_to_backbone_dir /PATH_TO_MODEL_DIR/"20210717-143003/model__fold_0__iter_98__20210717-143003__SSL_Wrapper.pkl"
+        #tmp_dict = torch.load(str(ppath_to_model))
+        tmp_dict = torch.load(str(ppath_to_ckpt_model))["state_dict"]
+
+        backbone_dict = {k.replace("model.encoder.", ""):v for k, v in tmp_dict.items() if "model.encoder." in k }
+        #pdb.set_trace()
+        
+        self.backbone.load_state_dict(backbone_dict, strict=False)
+
+        print(f"load backbone : {ppath_to_ckpt_model}")
+        
 
 
 class LastLSTM(PytorchLightningModelBase):

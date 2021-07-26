@@ -95,8 +95,8 @@ class SupConDataset(torch.utils.data.Dataset):
                             A.RandomResizedCrop(p=1.0, height=self.img_size, width=self.img_size, scale=(0.5, 1.0)),
                             A.HorizontalFlip(p=0.5),
                             A.VerticalFlip(p=0.5),
-                            A.HueSaturationValue(p=0.8),
-                            A.ToGray(p=0.2),
+                            #A.HueSaturationValue(p=0.8),
+                            #.ToGray(p=0.2),
                             A.Normalize(mean=IMG_MEAN, std=IMG_STD),
                             ToTensorV2(always_apply=True),
                             ]

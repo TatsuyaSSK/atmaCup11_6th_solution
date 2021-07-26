@@ -1861,24 +1861,34 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         if setting_params["type"]=="regression":
 
             if setting_params["num_class"] == 1:
-                #eval_metric_name = 'rmse'
-                #eval_metric_func_dict= {eval_metric_name:my_eval}
 
-                eval_metric_name = "eval_loss"
-                eval_metric_func_dict = {"eval_loss":eval_loss}
+                if setting_params["ssl_flag"]:
+                    eval_metric_name = "eval_loss"
+                    eval_metric_func_dict = {"eval_loss":eval_loss}
+                else:
+
+                    eval_metric_name = 'rmse'
+                    eval_metric_func_dict= {eval_metric_name:my_eval}
+
+                
 
                 
 
 
 
             elif setting_params["num_class"] >= 4:
-                eval_metric_name = 'rmse'
-                eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
-                eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
-                #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
+                
+                if setting_params["ssl_flag"]:
+                    eval_metric_name = "eval_loss"
+                    eval_metric_func_dict = {"eval_loss":eval_loss}
+                else:
 
-                #eval_metric_name = "val_loss"
-                #eval_metric_func_dict = {}
+                    eval_metric_name = 'rmse'
+                    eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
+                    eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
+                    #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
+
+                
         else:
 
             eval_metric_name = 'rmse'
@@ -2168,19 +2178,25 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
     if (setting_params["mode"]=="nn"):
 
-        # df_all = pd.concat([df_train, df_test], sort=False)
-        # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
-        #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
-        model_wrapper = ResNet_Wrapper(img_size=setting_params["img_size"],num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), salient_flag=setting_params["salient_flag"])
-        #model_wrapper = SSL_Wrapper(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), salient_flag=setting_params["salient_flag"],)
-        #model_wrapper = multiLabelNet(img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
-        #                              salient_flag=setting_params["salient_flag"], tech_weight=None, material_weight =None)
-        
+        if setting_params["ssl_flag"]:
+            model_wrapper = SSL_Wrapper(base_name=setting_params["model_name"], img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), salient_flag=setting_params["salient_flag"],)
+        else:
 
-        #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
-        #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+            # df_all = pd.concat([df_train, df_test], sort=False)
+            # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
+            #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
+            
+            if setting_params["model_name"]=="resnet18":
+                model_wrapper = ResNet_Wrapper(base_name=setting_params["model_name"],img_size=setting_params["img_size"],num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), salient_flag=setting_params["salient_flag"])
+            else:          
+                model_wrapper = multiLabelNet(base_name=setting_params["model_name"], img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
+                                            salient_flag=setting_params["salient_flag"], tech_weight=None, material_weight =None)
+                
 
-        
+            #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+            #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+
+            
 
 
 
@@ -2337,19 +2353,19 @@ def main(setting_params):
                             "techniques_pen",
                             "techniques_counterproof",
 
-                            # #"materials_cardboard",  #
-                            # "materials_chalk",
-                            # "materials_deck paint",
-                            # #"materials_gouache (paint)", #
-                            # "materials_graphite (mineral)",
-                            # "materials_ink",
-                            # #"materials_oil paint (paint)", #
-                            # #"materials_paint (coating)",#
-                            # "materials_paper",
-                            # #"materials_parchment (animal material)",#
-                            # "materials_pencil",
-                            # #"materials_prepared paper",#
-                            # "materials_watercolor (paint)",
+                            #"materials_cardboard",  #
+                            "materials_chalk",
+                            "materials_deck paint",
+                            #"materials_gouache (paint)", #
+                            "materials_graphite (mineral)",
+                            "materials_ink",
+                            #"materials_oil paint (paint)", #
+                            #"materials_paint (coating)",#
+                            "materials_paper",
+                            #"materials_parchment (animal material)",#
+                            "materials_pencil",
+                            #"materials_prepared paper",#
+                            "materials_watercolor (paint)",
                             
                             ] #year_bin50
             setting_params["num_class"] = len(target_cols)
@@ -2451,6 +2467,8 @@ def argParams():
     parser.add_argument('-img_size', '--img_size', type=int, default=320)
     parser.add_argument('-pseudo', '--pseudo_labeling', action="store_true")
     parser.add_argument('-salient', '--salient_flag', action="store_true")
+    parser.add_argument('-ssl', '--ssl_flag', action="store_true")
+    parser.add_argument('-model', '--model_name', choices=['efficientnet_b1','resnet18','vit_small_patch16_224',] )
 
 
 

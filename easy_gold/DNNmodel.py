@@ -770,41 +770,43 @@ class myMultilabelNet(PytorchLightningModelBase):
         self.material_weight = material_weight
         self.base_name = base_name
 
-        num_classes=128 if "vit" in base_name else 0
-        # # prepare backbone
-        if hasattr(timm.models, base_name):
-            base_model = timm.create_model(
-                base_name, num_classes=num_classes, pretrained=False, in_chans=in_channels)
-            in_features = base_model.num_features
-            print("load imagenet pretrained:", pretrained)
-        else:
-            raise NotImplementedError
+        # num_classes=128 if "vit" in base_name else 0
+        # # # prepare backbone
+        # if hasattr(timm.models, base_name):
+        #     base_model = timm.create_model(
+        #         base_name, num_classes=num_classes, pretrained=False, in_chans=in_channels)
+        #     in_features = base_model.num_features
+        #     print("load imagenet pretrained:", pretrained)
+        # else:
+        #     raise NotImplementedError
 
-        self.backbone = base_model
+        # self.backbone = base_model
         
 
-        print(self.backbone)
-        if "vit" in base_name:
-            self.backbone.patch_embed = ConvEmbed(in_chans=in_channels, embed_dim=768)
-            self.backbone.blocks = self.backbone.blocks[:-1]
+        # print(self.backbone)
+        # if "vit" in base_name:
+        #     self.backbone.patch_embed = ConvEmbed(in_chans=in_channels, embed_dim=768)
+        #     self.backbone.blocks = self.backbone.blocks[:-1]
 
-            dim_mlp = self.backbone.head.weight.shape[1]
-            self.backbone.head = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.backbone.head)
-        #pdb.set_trace()
+        #     dim_mlp = self.backbone.head.weight.shape[1]
+        #     self.backbone.head = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.backbone.head)
+        # #pdb.set_trace()
 
-        print(self.backbone)
-        print(f"{base_name}: {in_features}")
+        # print(self.backbone)
+        # print(f"{base_name}: {in_features}")
 
-        #in_features=128
-        self.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
+        # in_features=128 if "vit" in base_name else in_features
+        # self.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
+
+
         # self.classifier = nn.Sequential(
         #         nn.Linear(in_features, in_features),
         #         nn.Linear(in_features, in_features),
         #         #nn.ReLU(inplace=True),
         #         nn.Linear(in_features, num_out)
         #     )
-        #self.model = timm.create_model('efficientnet_b1', pretrained=False)
-        #self.model.classifier = nn.Linear(in_features=in_features, out_features=num_out, bias=True)
+        self.backbone = timm.create_model(base_name, pretrained=False)
+        self.backbone.classifier = nn.Linear(in_features=1280, out_features=num_out, bias=True)
 
      
         #print(self.model)
@@ -812,7 +814,7 @@ class myMultilabelNet(PytorchLightningModelBase):
 
     def loadBackbone(self, ppath_to_backbone_dir, fold_num):
         
-        if 0:
+        if not "vit" in self.base_name:
             prefix = f"fold_{fold_num}__iter_"
             name_list = list(ppath_to_backbone_dir.glob(f'model__{prefix}*.pkl'))
             if len(name_list)==0:
@@ -822,17 +824,20 @@ class myMultilabelNet(PytorchLightningModelBase):
 
             prefix=f"fold_{fold_num}"
             ppath_to_ckpt_model = searchCheckptFile(ppath_to_backbone_dir, ppath_to_model, prefix)
+            tmp_dict = torch.load(str(ppath_to_ckpt_model))["state_dict"]
+            print(tmp_dict.keys())
+            backbone_dict = {k.replace("backbone.", ""):v for k, v in tmp_dict.items() if "backbone" in k }
 
+        else:
 
-        ppath_to_ckpt_model=PATH_TO_MODEL_DIR/"checkpoint_0091.pth.tar"
-        #ppath_to_model= ppath_to_backbone_dir /PATH_TO_MODEL_DIR/"20210717-143003/model__fold_0__iter_98__20210717-143003__SSL_Wrapper.pkl"
-        #tmp_dict = torch.load(str(ppath_to_model))
-        tmp_dict = torch.load(str(ppath_to_ckpt_model))["state_dict"]
+            ppath_to_ckpt_model=PATH_TO_MODEL_DIR/"checkpoint_0499.pth.tar"
+            #ppath_to_model= ppath_to_backbone_dir /PATH_TO_MODEL_DIR/"20210717-143003/model__fold_0__iter_98__20210717-143003__SSL_Wrapper.pkl"
+            #tmp_dict = torch.load(str(ppath_to_model))
+            tmp_dict = torch.load(str(ppath_to_ckpt_model))["state_dict"]
         
-        #backbone_dict = {k.replace("backbone.", ""):v for k, v in tmp_dict.items() if "backbone" in k }
-        backbone_dict = {k.replace("module.encoder_q.", ""):v for k, v in tmp_dict.items() if "module.encoder_q." in k }
+            backbone_dict = {k.replace("module.encoder_q.", ""):v for k, v in tmp_dict.items() if "module.encoder_q." in k }
+        
         self.backbone.load_state_dict(backbone_dict)
-
         print(f"load backbone : {ppath_to_ckpt_model}")
         #pdb.set_trace()
 
@@ -846,7 +851,7 @@ class myMultilabelNet(PytorchLightningModelBase):
 
         out = self.backbone(img)
         #(f"out : {out.shape}")
-        out = self.classifier(out)
+        #out = self.classifier(out)
         #print(f"out2 : {out.shape}")
 
 
@@ -1006,7 +1011,8 @@ class myMultilabelNet(PytorchLightningModelBase):
             self.loadBackbone(ppath_to_backbone_dir, fold_num=_params["fold_n"])
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        #optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         return optimizer
 
 
@@ -1024,9 +1030,9 @@ class myResNet(PytorchLightningModelBase):
         self.base_name = base_name
         self.backbone = torch_models.__dict__[base_name](pretrained=False)
         self.backbone.fc = nn.Linear(in_features=512, out_features=num_out, bias=True)
-        #for name, param in self.backbone.named_parameters():
-        #    if name not in ['fc.weight', 'fc.bias']:
-        #        param.requires_grad = False
+        for name, param in self.backbone.named_parameters():
+           if name not in ['fc.weight', 'fc.bias']:
+               param.requires_grad = False
 
 
         print(self.backbone)
@@ -1120,9 +1126,9 @@ class myResNet(PytorchLightningModelBase):
         if (len(y_true.shape) > 1) and (y_true.shape[1] > 1):
             num_tech = 3
             loss_tech = nn.BCEWithLogitsLoss(pos_weight =tech_weight)(y_pred[:, 1:num_tech+1].float(),  y_true[:, 1:num_tech+1].float())
-            #loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
+            loss_material = nn.BCEWithLogitsLoss(pos_weight =material_weight)(y_pred[:, num_tech+1:].float(),  y_true[:, num_tech+1:].float())
 
-        return loss_target +  loss_tech #+ loss_material /3.0
+        return loss_target +  loss_tech + 0*loss_material ##/3.0
 
     # def criterion(self, y_true, y_pred, weight=None):
 

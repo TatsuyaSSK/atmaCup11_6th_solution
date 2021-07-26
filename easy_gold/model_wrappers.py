@@ -674,7 +674,7 @@ class PytrochLightningBase():
         return 0
 
 class SSL_Wrapper(PytrochLightningBase):
-    def __init__(self, img_size, num_out, regression_flag, salient_flag):
+    def __init__(self, base_name, img_size, num_out, regression_flag, salient_flag):
         
         super().__init__()
         
@@ -684,9 +684,9 @@ class SSL_Wrapper(PytrochLightningBase):
         self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag}
         in_channels=4 if salient_flag else 3
         #self.model = SupConModel(base_name="resnet18", in_channels=in_channels,) #num_out=num_out, regression_flag=regression_flag)
-        self.model = SSLsimSiam(base_name="resnet18", in_channels=in_channels,)
+        self.model = SSLsimSiam(base_name=base_name, in_channels=in_channels,)
 class ResNet_Wrapper(PytrochLightningBase):
-    def __init__(self, img_size, num_out, regression_flag, salient_flag):
+    def __init__(self, base_name, img_size, num_out, regression_flag, salient_flag):
         
         super().__init__()
         
@@ -695,11 +695,11 @@ class ResNet_Wrapper(PytrochLightningBase):
 
         self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag, "regression_flag":regression_flag}
         
-        self.model = myResNet(base_name="resnet18", num_out=num_out, regression_flag=regression_flag)
+        self.model = myResNet(base_name=base_name, num_out=num_out, regression_flag=regression_flag)
 
 
 class multiLabelNet(PytrochLightningBase):
-    def __init__(self, img_size, num_out, regression_flag, salient_flag, tech_weight, material_weight):
+    def __init__(self, base_name, img_size, num_out, regression_flag, salient_flag, tech_weight, material_weight):
         
         super().__init__()
         
@@ -709,8 +709,8 @@ class multiLabelNet(PytrochLightningBase):
         self.initial_params["dataset_params"] = {"img_size":img_size, "salient_flag":salient_flag, "regression_flag":regression_flag}
         
         in_channels=4 if salient_flag else 3
-        #'efficientnet_b1', "resnet18"
-        self.model = myMultilabelNet(base_name="resnet18d", in_channels=in_channels,num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
+        #'efficientnet_b1', "resnet18"  , "resnet18d"
+        self.model = myMultilabelNet(base_name=base_name, in_channels=in_channels,num_out=num_out, regression_flag=regression_flag, tech_weight=tech_weight, material_weight=material_weight)
 
 
         
@@ -1889,7 +1889,7 @@ class LGBWrapper_Base(object):
                 #'min_data_per_leaf': 2,
                 "min_child_samples":8,
                 
-                'num_leaves': 8,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
+                'num_leaves': 4,#240,#120,#32, #3000, #700, #500, #400, #300, #120, #80,#300,
                 'lambda_l1': 0.5,
                 'lambda_l2': 0.5,
                 

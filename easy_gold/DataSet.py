@@ -151,56 +151,56 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         #    IMG_STD = [0.229, 0.224, 0.225, 0.5] #, 0.229, 0.224, 0.225, 0.5]
         IMG_MEAN = [0.485, 0.456, 0.406]
         IMG_STD = [0.229, 0.224, 0.225]
-        if train_flag:
-            comp_list = [
-                            A.Resize(p=1.0, height=self.img_size, width=self.img_size),
-                            #A.RandomResizedCrop(p=1.0, height=self.img_size, width=self.img_size, scale=(0.5, 1.0)),
-                            A.HorizontalFlip(p=0.5),
-                            A.VerticalFlip(p=0.5),
-                            A.CoarseDropout(),
-                            A.ImageCompression(),
-                            #A.ISONoise(),
-                            A.MultiplicativeNoise(),
-                            #A.HueSaturationValue(p=0.8),
-                            #A.ToGray(p=0.2),
-                            A.Normalize(mean=IMG_MEAN, std=IMG_STD),
-                            ToTensorV2(always_apply=True),
-                            ]
-        else:
-            comp_list = [A.Resize(p=1.0, height=self.img_size, width=self.img_size),
-                         A.Normalize(mean=IMG_MEAN, std=IMG_STD),
-                        ToTensorV2(always_apply=True),
+        # if train_flag:
+        #     comp_list = [
+        #                     A.Resize(p=1.0, height=self.img_size, width=self.img_size),
+        #                     #A.RandomResizedCrop(p=1.0, height=self.img_size, width=self.img_size, scale=(0.5, 1.0)),
+        #                     A.HorizontalFlip(p=0.5),
+        #                     A.VerticalFlip(p=0.5),
+        #                     #A.CoarseDropout(),
+        #                     #A.ImageCompression(),
+        #                     #A.ISONoise(),
+        #                     #A.MultiplicativeNoise(),
+        #                     #A.HueSaturationValue(p=0.8),
+        #                     #A.ToGray(p=0.2),
+        #                     A.Normalize(mean=IMG_MEAN, std=IMG_STD),
+        #                     ToTensorV2(always_apply=True),
+        #                     ]
+        # else:
+        #     comp_list = [A.Resize(p=1.0, height=self.img_size, width=self.img_size),
+        #                  A.Normalize(mean=IMG_MEAN, std=IMG_STD),
+        #                 ToTensorV2(always_apply=True),
             
-            ]
-        self.transformer = A.Compose(comp_list)
+        #     ]
+        # self.transformer = A.Compose(comp_list)
 
         self.distance_matrix = np.array([[0,1,4,9],[1,0,1,4],[4,1,0,1],[9,4,1,0]])
         self.label_matrix = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
         
         #size = (224, 224)
         #size = (300, 300)
-        # size = (self.img_size, self.img_size)
-        # additional_items = (
-        #     [T.Resize(size)]
-        #     if not train_flag
-        #     else [
-        #         #T.RandomGrayscale(p=0.2),
-        #         T.RandomVerticalFlip(),
-        #         T.RandomHorizontalFlip(),
-        #         # T.ColorJitter(
-        #         #     brightness=0.3,
-        #         #     contrast=0.5,
-        #         #     saturation=[0.8, 1.3],
-        #         #     hue=[-0.05, 0.05],
-        #         # ),
-        #         T.RandomResizedCrop(size),
-        #         T.Resize(size),
-        #     ]
-        # )
+        size = (self.img_size, self.img_size)
+        additional_items = (
+            [T.Resize(size)]
+            if not train_flag
+            else [
+                #T.RandomGrayscale(p=0.2),
+                T.RandomVerticalFlip(),
+                T.RandomHorizontalFlip(),
+                # T.ColorJitter(
+                #     brightness=0.3,
+                #     contrast=0.5,
+                #     saturation=[0.8, 1.3],
+                #     hue=[-0.05, 0.05],
+                # ),
+                T.RandomResizedCrop(size),
+                T.Resize(size),
+            ]
+        )
 
-        # self.transformer = T.Compose(
-        #     [*additional_items, T.ToTensor(), T.Normalize(mean=IMG_MEAN, std=IMG_STD)]
-        # )
+        self.transformer = T.Compose(
+            [*additional_items, T.ToTensor(), T.Normalize(mean=IMG_MEAN, std=IMG_STD)]
+        )
         
     def __len__(self):
         return self.df_train_X.shape[0]
@@ -210,7 +210,7 @@ class MyDatasetResNet(torch.utils.data.Dataset):
         image_name = self.df_train_X.iloc[idx]['image_name']
         ppath_to_img = INPUT_DIR/f"photos/{image_name}"
         img = Image.open(ppath_to_img)
-        img = np.array(img)
+        #img = np.array(img)
         
         if self.salient_flag:
             #img = np.array(img)
@@ -234,8 +234,8 @@ class MyDatasetResNet(torch.utils.data.Dataset):
 
             #.set_trace()
 
-        #img = self.transformer(img)
-        img = self.transformer(image=img)["image"]
+        img = self.transformer(img)
+        #img = self.transformer(image=img)["image"]
 
         w = self.df_train_X.iloc[idx]['loss_weight']
 

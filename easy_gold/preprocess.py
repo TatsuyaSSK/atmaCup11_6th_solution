@@ -12,13 +12,6 @@ import inspect
 from utils import *
 from image_utils import *
 
-from log_settings import MyLogger
-
-my_logger = MyLogger()
-logger = my_logger.generateLogger("preprocess", LOG_DIR+"/preprocess.log")
-
-
-
     
     
 def countNull(df, target_):
@@ -68,13 +61,7 @@ def removeColumns(df, drop_cols=[], not_proc_list=[]):
     dCol = checkCorreatedFeatures(df, exclude_columns=exclude_columns, th=0.99999)
     drop_cols.extend(dCol)
     
-    #df_train, _ = self.getTrainTest()
-    #null_features = nullImporcance(df_train.drop(self.target_, axis=1), df_train[self.target_], th=80, n_runs=100)
-    #logger.debug("null_features")
-    #logger.debug(null_features)
     
-    #null_features = ['nom_9', 'nom_6', 'nom_5', 'nom_7', 'nom_8', 'nom_2', 'nom_3', 'ord_1', 'nom_1', 'ord_0', 'nom_4', 'month_sin', 'day', 'month', 'month_angle_rad', 'day_sin', 'month_cos', 'bin_2', 'bin_1', 'bin_0']
-    #drop_cols.extend(null_features)
     final_drop_cols = []
     for col in drop_cols:
         if not col in not_proc_list and col in df.columns:
@@ -106,9 +93,7 @@ class Preprocessor:
         else:
             self.df_all_ = _df_train
             
-        if not ON_KAGGLE:
-            logger.debug("self.df_all_.index : {}".format(self.df_all_.index))
-            logger.debug("self.df_all_.columns : {}".format(self.df_all_.columns))
+     
 
         self.original_columns_ = list(self.df_all_.columns)
         
@@ -369,22 +354,22 @@ def main(setting_params):
         df_test = pd.read_pickle(INPUT_DIR / 'test.pkl')
 
         
-    logger.debug("df_train:{}".format(df_train.shape))
-    logger.debug("df_test:{}".format(df_test.shape))
+    print("df_train:{}".format(df_train.shape))
+    print("df_test:{}".format(df_test.shape))
     #pdb.set_trace()
 
     df_proc_train, df_proc_test = procMain(df_train, df_test, index_col, target_col, setting_params) 
     #df_proc_train = reduce_mem_usage(df_proc_train)
 
-    df_proc_train.to_pickle(PROC_DIR / f'df_proc_train.pkl')
-    df_proc_test.to_pickle(PROC_DIR / f'df_proc_test.pkl')
+    df_proc_train.to_pickle(PROC_DIR / f'df_proc_train_{setting_params["mode"]}.pkl')
+    df_proc_test.to_pickle(PROC_DIR / f'df_proc_test_{setting_params["mode"]}.pkl')
 
     
-    logger.debug(f"df_proc_train:{df_proc_train.columns}")
-    logger.debug("df_proc_train:{}".format(df_proc_train.shape))
+    print(f"df_proc_train:{df_proc_train.columns}")
+    print("df_proc_train:{}".format(df_proc_train.shape))
     
-    logger.debug(f"df_proc_test:{df_proc_test.columns}")
-    logger.debug("df_proc_test:{}".format(df_proc_test.shape))
+    print(f"df_proc_test:{df_proc_test.columns}")
+    print("df_proc_test:{}".format(df_proc_test.shape))
     
     
 
@@ -396,7 +381,7 @@ def argParams():
     
     
     parser.add_argument('-stack_dir', '--stacking_dir_name', type=int, )
-    parser.add_argument('-full', '--full_load_flag', action="store_true")
+    parser.add_argument('-full', '--full_load_flag', action="store_false")
     parser.add_argument('-d', '--debug', action="store_true")
     parser.add_argument('-f', '--force', nargs='*')
 

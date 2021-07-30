@@ -2153,8 +2153,8 @@ def sub_class(df_final_pred):
 
 def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred, df_oof, valid_score, model_name, setting_params):
 
-    now = datetime.now().strftime("%Y%m%d_%H%M%S")
-    prefix = "{}_{}_{}--{:.6f}--".format(setting_params["model_dir_name"], now, model_name,valid_score)
+    
+    prefix = "{}_{}--{:.6f}--".format(setting_params["model_dir_name"], model_name,valid_score)
 
 
     

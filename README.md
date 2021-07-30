@@ -33,7 +33,7 @@
 ```
 
 ##　実行手順
-以下の手順はすべて./easy_goldのもとで行ってください．
+以下の手順はすべて`./easy_gold`ディレクトリで行ってください．
 
 
 ### step.1 
@@ -42,26 +42,39 @@
 ```bash
 $ python preprocess.py -f
 ```
-./data/procにdf_proc_train_nn.pklとdf_proc_test_nn.pklが生成されます．
+`./data/proc`に`df_proc_train_nn.pkl`と`df_proc_test_nn.pkl`が生成されます．
 
 
 ### step.2
-* EfficientNet_b1
+* EfficientNet_b1による学習と推論
 
 ```bash
-$ python train_multitask.py --data-dir [dataset dir path] --arch resnet34 --init-weight-path [step.1で保存した学習済モデルpath]
-$ python train_multitask.py --data-dir [dataset dir path] --arch efficientnet_b0 --init-weight-path [step.1で保存した学習済モデルpath]
+$ python train.py -model efficientnet_b1 -lr 0.001 -tta 5 -img_size 512  -ep 1000 -es 200 -batch 32
 ```
+`./data/submission`に`[実行時年月日-時分秒]_multiLabelNet--[score]--_submission.csv`と`[実行時年月日-時分秒]_multiLabelNet--[score]--_oof.csv`が生成されます．
+
 
 ### step.3
-* ResNet34, EfficientNet_b0 補助タスク付きモデルのフュージョンモデルを学習
+* ResNet18による学習と推論
 
 ```bash
-$ python train__multitask.py --data-dir [dataset dir path] --arch fusion ## engine/multi_task_trainer.py 150, 151行目にstep.2で学習したモデルパスを指定
+$ python train.py -model resnet18 -lr 0.001 -tta 5 -img_size 512  -ep 1000 -es 200 -batch 32
 ```
+`./data/submission`に`[実行時年月日-時分秒]_ResNet_Wrapper--[score]--_submission.csv`と`[実行時年月日-時分秒]_ResNet_Wrapper--[score]--_oof.csv`が生成されます．
 
-### 推論
+
+### step.4
+* lightGBMによるstacking
 
 ```bash
-$ python test_multitask.py --data-dir [dataset dir path] --arch fusion --res-dir [step.3で保存した学習済モデル]
+$ mkdir ../data/submission/stack_dir
+$ cp ../data/submission/*.csv ../data/submission/stack_dir
 ```
+`data/submission/`の中に`stack_dir`という名前のディレクトリを作成し，step2, 3で生成されたcsvをすべてコピーします．
+
+
+```bash
+$ python train.py -m stack -stack_dir stack_dir -lr 0.001 -ep 1000 -es 200 -f 15
+```
+
+`data/submission/`に提出ファイルである`[実行時年月日-時分秒]_SimpleStackingWrapper--[score]--_submission.csv`が生成されます．

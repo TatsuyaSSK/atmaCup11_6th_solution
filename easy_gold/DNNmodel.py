@@ -2,13 +2,11 @@
 from utils import *
 from image_utils import *
 
-from typing import Optional, Dict, List, Callable, Union, Collection
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from abc import ABCMeta, abstractmethod
 import pytorch_lightning as pl
 
 from torchvision.models import resnet34, resnet18, vgg16
@@ -22,13 +20,6 @@ from DataSet import *
 from Loss import *
 
 
-#from torch_geometric.nn import GCNConv, AGNNConv, ChebConv, NNConv, DeepGCNLayer
-#from torch_geometric.data import Data, Batch
-#from torch_geometric.datasets import KarateClub
-# import torch_geometric.transforms as T
-#from torch_geometric.utils import to_networkx
-
-#import networkx as nx
 
 print(torch.__version__)
 

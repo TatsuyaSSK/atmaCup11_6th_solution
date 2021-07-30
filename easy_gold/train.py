@@ -19,12 +19,9 @@ from sklearn.metrics import mean_squared_error
 from utils import *
 from atma11_utils import * 
 
-#from dt_utils import wrmsse_simple_tf
-#from m5_utils import my_squared_error, loss_wrmsse, torch_wrmsse, wrmsse_simple, test3, custom_asymmetric_train, my_loss_rmse, visualizeCompLV
 from model_wrappers import *
 from eda import procEDA
 from MyFoldSplit import TournamentGroupKFold, DummyKfold, SeasonKFold, myStratifiedKFold, myStratifiedKFoldWithGroupID, siteStratifiedPathGroupKFold, StratifiedKFoldWithGroupID
-#from preprocess import procTest
 from ErrorAnalysis import ErrorAnalysis
 
 
@@ -35,11 +32,6 @@ from log_settings import MyLogger
 
 my_logger = MyLogger()
 logger = my_logger.generateLogger("train", LOG_DIR+"/train.log").getChild(__file__)
-
-if not ON_KAGGLE:
-    slack = slackweb.Slack(url="https://hooks.slack.com/services/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")
-
-
 
 
 
@@ -616,9 +608,7 @@ class RegressorModel(object):
             print_text = "[{} : {} : {}] CV mean score on {}: {:.4f} +/- {:.4f} std. ::: {}".format(model_dir_name, self.target_name_idx, self.target_name, d, np.mean(scores), np.std(scores), scores)
             logger.debug(self.model_wrapper.__class__.__name__)
             logger.debug(print_text)
-            if not ON_KAGGLE:
-                slack.notify(text=self.model_wrapper.__class__.__name__)
-                slack.notify(text=print_text)
+            
             self.scores[d] = np.mean(scores)
 
     def predict(self, X_test, proba:bool = False, averaging: str = 'usual', regression_flag=True):
@@ -1068,55 +1058,6 @@ class TargetEncodingTransormer(BaseEstimator, TransformerMixin):
         sys.exit(-1)
         return
 
-#class CategoricalTransformer(BaseEstimator, TransformerMixin):
-#
-#    def __init__(self, cat_cols=None, drop_original: bool = False, encoder=OrdinalEncoder()):
-#        """
-#        Categorical transformer. This is a wrapper for categorical encoders.
-#
-#        :param cat_cols:
-#        :param drop_original:
-#        :param encoder:
-#        """
-#        self.cat_cols = cat_cols
-#        self.drop_original = drop_original
-#        self.encoder = encoder
-#        self.default_encoder = OrdinalEncoder()
-#
-#    def fit(self, X, y=None):
-#
-#        if self.cat_cols is None:
-#            kinds = np.array([dt.kind for dt in X.dtypes])
-#            is_cat = kinds == 'O'
-#            self.cat_cols = list(X.columns[is_cat])
-#        self.encoder.set_params(cols=self.cat_cols)
-#        self.default_encoder.set_params(cols=self.cat_cols)
-#
-#        self.encoder.fit(X[self.cat_cols], y)
-#        self.default_encoder.fit(X[self.cat_cols], y)
-#
-#        return self
-#
-#    def transform(self, X, y=None):
-#        data = copy.deepcopy(X)
-#        new_cat_names = ['{}_encoded'.format(col) for col in self.cat_cols]
-#        encoded_data = self.encoder.transform(data[self.cat_cols])
-#        if encoded_data.shape[1] == len(self.cat_cols):
-#            data[new_cat_names] = encoded_data
-#        else:
-#            pass
-#
-#        if self.drop_original:
-#            data = data.drop(self.cat_cols, axis=1)
-#        else:
-#            data[self.cat_cols] = self.default_encoder.transform(data[self.cat_cols])
-#
-#        return data
-#
-#    def fit_transform(self, X, y=None, **fit_params):
-#        data = copy.deepcopy(X)
-#        self.fit(data)
-#        return self.transform(data)
 
 
 def simplePredictionSet(df_train, df_test, target_col_list:list,
@@ -1359,15 +1300,6 @@ class SimpleStackingWrapper(StackingWrapper):
 
         
 
-        #print(idx1-idx2)
-        #print(idx2-idx1)
-        #sys.exit()
-
-        #for mRNA
-
-
-        #self.df_meta_train = self.df_meta_train.loc[self.df_meta_train.index.isin(df_train.index),:]
-
 
 
 
@@ -1422,30 +1354,7 @@ class SimpleStackingWrapper(StackingWrapper):
         
         pass
 
-def interpolationSpline(df_y_pred, df_oof, true_y):
-    
-    dat = list(zip(df_oof.values.flatten(), true_y))
-    dat = sorted(dat, key = lambda x: x[0])
-    
-    
-    datdict = {}
-    for k in range(len(dat)):
-        datdict[dat[k][0]]= dat[k][1]
-    
-    from scipy.interpolate import UnivariateSpline
-    spline_model = UnivariateSpline(list(datdict.keys()), list(datdict.values()))
-    
- 
-    spline_fit = np.clip(spline_model(np.clip(df_oof.values.flatten().astype(float), -30, 30)), 0.025, 0.975)
-    
-    
-    print_text = 'spline fit logloss is {:.5f}'.format(log_loss(true_y, spline_fit))
-    slack.notify(text=print_text)
-    print(print_text) 
-    
-    y_pred_fit = np.clip(spline_model(np.clip(df_y_pred.values.flatten().astype(float), -30, 30)), 0.025, 0.975)
-    
-    return y_pred_fit, spline_fit
+
 
 def calcWeight(df_train, df_test):
 
@@ -1640,8 +1549,6 @@ def calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, 
 
         print_text = f"{setting_params['model_dir_name']} final score : {final_score}"
         print(print_text)
-        if not ON_KAGGLE:
-            slack.notify(text=print_text)
 
 
         df_train["target"] = df_train["target"].values * 3.0 if setting_params["mode"] != "ave" else df_train["target"].values
@@ -2455,7 +2362,7 @@ def argParams():
     parser.add_argument('-u', '--use_old_file', action="store_true")
     parser.add_argument('-train_plot', '--train_plot', action="store_true")
 
-    parser.add_argument('-no_wb', '--no_wandb', action="store_true")
+    parser.add_argument('-no_wb', '--no_wandb', action="store_false")
 
     parser.add_argument('-model_dir', '--model_dir_name', type=str)
     parser.add_argument('-pretrain', '--pretrain_model_dir_name', type=str)

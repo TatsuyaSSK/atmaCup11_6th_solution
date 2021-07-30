@@ -39,38 +39,6 @@ class RMSELoss(nn.Module):
         return loss
 
 
-class MCRMSELoss(nn.Module):
-    def __init__(self, use_as_eval=False, num_scored=3):
-        super().__init__()
-        self.rmse = RMSELoss()
-        self.use_as_eval = use_as_eval
-        self.num_scored = num_scored
-        self.weight=None
-
-    def forward(self, y_true, y_pred):
-
-        # score = 0
-        # for i in range(self.num_scored):
-        #     score += self.rmse(yhat[:, :, i], y[:, :, i]) / self.num_scored
-        # return score
-        #if (self.use_as_eval==False):
-            #print(f"y_true : {y_true}")
-            #print(f"y_pred : {y_pred}")
-        self.weight = y_true[..., -1]
-
-        b_size = y_true.shape[0]
-        total_score = 0
-        for b in range(b_size):
-            score = 0
-            for i in range(self.num_scored):
-                score += self.rmse(y_true=y_true[b, :, i], y_pred=y_pred[b, :, i], weight=self.weight[b, :]) / self.num_scored
-            total_score += score / b_size
-
-        if self.use_as_eval:
-            total_score = total_score.detach().item()
-
-        return total_score
-        
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""

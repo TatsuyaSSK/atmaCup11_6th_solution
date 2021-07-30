@@ -7,7 +7,6 @@ import pandas as pd
 
 import argparse
 import inspect
-from eda import procEDA, showDetails
 
 
 from utils import *
@@ -170,75 +169,6 @@ class Preprocessor:
         
 
 
-    # def fe__mean_max_floor(self, df):
-
-
-    #     floor_list = getColumnsFromParts(["gp_bssid_mean"], df.columns)
-
-    #     #pdb.set_trace()
-
-    #     df["mean_max_floor"] =  df[floor_list].idxmax(axis=1).map(lambda x: float(x.split("_")[-1]))
-    #     df["mean_max_floor"] = df["mean_max_floor"].fillna(-999).astype(int)
-
-    #     return df
-
-    # def fe__mean_max_floor_by_path(self, df):
-
-    #     path_gp =  df.groupby("path")["mean_max_floor"].apply(lambda x: x.mode())
-    #     path_gp.index = path_gp.index.map(lambda x: x[0])
-    #     path_gp.name = 'mean_max_floor_by_path'
-
-        
-
-    #     df = df.join(path_gp, on="path")
-        
-
-    #     return df
-
-    # def fe__count_max_floor(self, df):
-
-
-    #     floor_list = getColumnsFromParts(["gp_bssid_count"], df.columns)
-
-
-    #     df["count_max_floor"] =  df[floor_list].idxmax(axis=1).map(lambda x: float(x.split("_")[-1]))
-    #     df["count_max_floor"] = df["count_max_floor"].fillna(-999).astype(int)
-
-    #     return df
-
-    # def fe__image_hash(self, df):
-
-    #     hashes = []
-    #     df["image_hash"] = np.nan
-    #     for object_id, rows in df.iterrows():
-    #         ppath_to_img = INPUT_DIR/f"photos/{object_id}.jpg"
-    #         img = Image.open(ppath_to_img)
-            
-    #         hash = getImageHash(img)
-    #         hashes.append(hash)
-
-    #         #df.loc[object_id, "image_hash"] = hash
-        
-    #     hashes_all = np.array(hashes).astype(int)
-    #     #hashes_all = torch.Tensor(hashes_all.astype(int)).cuda()
-
-    #     threhold=0.85
-    #     for i in range(hashes_all.shape[0]):
-
-    #         check = (hashes_all[i] == hashes_all).sum(axis=1)/256 
-
-    #         indices1 = np.where(check > threhold)
-    #         dup =  [idx for idx in indices1[0].tolist() if idx != i]
-
-    #         obj_id = df.iloc[i].name
-    #         df.loc[obj_id, "image_hash"] = dup
-    #         pdb.set_trace()
-
-            
-
-    #     sims = np.array([(hashes_all[i] == hashes_all).sum(dim=1).cpu().numpy()/256 for i in range(hashes_all.shape[0])])
-
-        # return df
 
     def fe__year_bin50(self, df):
 
@@ -280,7 +210,7 @@ class Preprocessor:
             
             if not ON_KAGGLE:
                 df_train, df_test = self.getTrainTest()
-                showDetails(df_train, df_test, new_cols=[f_name], target_val=self.target_[0], corr_flag=False)
+                #showDetails(df_train, df_test, new_cols=[f_name], target_val=self.target_[0], corr_flag=False)
                 
             
             
@@ -289,24 +219,6 @@ class Preprocessor:
     
 
 
-    # def proc__floor(self, df):
-        
-    #     for i in range(-2, 9):
-    #         df[f"has_floor_{i}"] = 0
-
-    #     gp = df.groupby("site_id")["floor"].unique()
-
-    #     for site_id in gp.index:
-
-    #         floors = [int(i) for i in gp.loc[site_id] if not np.isnan(i)]
-    #         for f in floors:
-                
-    #             df.loc[df["site_id"]==site_id, f"has_floor_{f}"] = 1
-
-
-
-
-    #     return df
 
     def proc__image_statistics(self, df):
         
@@ -480,7 +392,7 @@ def main(setting_params):
         
 def argParams():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--mode', default="lgb", choices=['lgb','exp','nn','graph', 'ave', 'stack'] )
+    parser.add_argument('-m', '--mode', default="nn", choices=['lgb','exp','nn','graph', 'ave', 'stack'] )
     
     
     parser.add_argument('-stack_dir', '--stacking_dir_name', type=int, )
@@ -488,9 +400,6 @@ def argParams():
     parser.add_argument('-d', '--debug', action="store_true")
     parser.add_argument('-f', '--force', nargs='*')
 
-    parser.add_argument('-site', '--site_id_str', type=str, )
-
-    
 
 
     args=parser.parse_args()

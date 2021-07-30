@@ -85,7 +85,6 @@ ON_KAGGLE = 'KAGGLE_URL_BASE'in os.environ
 print("ON_KAGGLE:", ON_KAGGLE)
 
 if not ON_KAGGLE:
-    import slackweb
     import wandb
     from wandb.lightgbm import wandb_callback
 

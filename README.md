@@ -1,5 +1,9 @@
 # atmaCup11 6th solution
 
+atmaCup11の6位解法のコードです．
+解法の詳細は[discussion](https://www.guruguru.science/competitions/17/discussions/462f4199-66aa-4b40-8585-09d2b296d5e8/)に記載しています．
+シングルモデルで一番スコアの良かったEfficientNet-B1とstackingの際に利用したResNet18の学習・推論を行うコードになっています．
+
 
 ### 必要ライブラリ
 * python
@@ -42,7 +46,7 @@
 ```bash
 $ python preprocess.py -f
 ```
-`data/proc`に`df_proc_train_nn.pkl`と`df_proc_test_nn.pkl`が生成されます．
+`data/proc/`に`df_proc_train_nn.pkl`と`df_proc_test_nn.pkl`が生成されます．
 
 
 ### step.2
@@ -51,7 +55,7 @@ $ python preprocess.py -f
 ```bash
 $ python train.py -model efficientnet_b1 -lr 0.001 -tta 5 -img_size 512  -ep 1000 -es 200 -batch 32
 ```
-`data/submission`に`[実行時年月日-時分秒]_multiLabelNet--[score]--_submission.csv`と`[実行時年月日-時分秒]_multiLabelNet--[score]--_oof.csv`が生成されます．
+`data/submission/`に`[実行時年月日-時分秒]_multiLabelNet--[score]--_submission.csv`と`[実行時年月日-時分秒]_multiLabelNet--[score]--_oof.csv`が生成されます．
 
 
 ### step.3
@@ -60,7 +64,7 @@ $ python train.py -model efficientnet_b1 -lr 0.001 -tta 5 -img_size 512  -ep 100
 ```bash
 $ python train.py -model resnet18 -lr 0.001 -tta 5 -img_size 512  -ep 1000 -es 200 -batch 32
 ```
-`data/submission`に`[実行時年月日-時分秒]_ResNet_Wrapper--[score]--_submission.csv`と`[実行時年月日-時分秒]_ResNet_Wrapper--[score]--_oof.csv`が生成されます．
+`data/submission/`に`[実行時年月日-時分秒]_ResNet_Wrapper--[score]--_submission.csv`と`[実行時年月日-時分秒]_ResNet_Wrapper--[score]--_oof.csv`が生成されます．
 
 
 ### step.4

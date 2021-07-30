@@ -10,8 +10,7 @@ import numpy as np # linear algebra
 import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 from tqdm import tqdm_notebook as tqdm
 import pickle
-#from catboost import CatBoostRegressor
-#from catboost import CatBoostClassifier
+
 import time
 from datetime import datetime, timedelta
 from sklearn.metrics import confusion_matrix
@@ -229,40 +228,6 @@ def timer(name):
     print(f'[{name}] done in {time.time() - t0:.6f} s')
     
 
-# def meltTFfeatures(df, df_features, column_id="id", column_sort="time"):
-#     df_features = df_features.reset_index()
-#     df_features[column_sort] = df_features["id"].map(lambda x: int(x.split(",")[1].replace("timeshift=", "")))
-#     df_features[column_id] = df_features["id"].map(lambda x: int(x.split(",")[0].replace("id=", "")))
-
-#     if column_id != "id":
-#         df_features.drop(columns=["id"], inplace=True)
-    
-#     #print(df_features[["id", "date", "x__variation_coefficient"]])
-    
-#     df = pd.merge(df, df_features, on=[column_id, column_sort], how='left')
-#     return df
-
-# def createRollingFeaturesByTSFresh(df_full, target_list=[], column_id="id", column_sort="date", max_timeshift=28):
-    
-#     target_list.append(column_id)
-#     target_list.append(column_sort)
-    
-#     df = df_full[target_list]
-#     df_rolled = roll_time_series(df, column_id=column_id, column_sort=column_sort, max_timeshift=max_timeshift, disable_progressbar=False)
-#     #print(df_rolled)
-    
-#     df_features = extract_features(df_rolled, column_id=column_id, column_sort=column_sort, disable_progressbar=False)
-    
-#     #print(df_features)
-    
-    
-      
-#     df = meltTFfeatures(df, df_features, column_id=column_id, column_sort=column_sort)
-    
-#     del df_rolled, df_features
-#     gc.collect()
-    
-#     return df
     
 def compHist(np_oof, np_y_pred, np_y_true, title_str):
 

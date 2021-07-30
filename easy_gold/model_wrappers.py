@@ -19,15 +19,6 @@ from utils import *
 
 
 
-
-from log_settings import MyLogger
-
-my_logger = MyLogger()
-logger = my_logger.generateLogger("model_wrapper", LOG_DIR+"/model_wrapper.log").getChild(__file__)
-
-
-
-
 def extractModelParameters(original_param, model):
     
     model_params_keys = model.get_params().keys()
@@ -35,7 +26,7 @@ def extractModelParameters(original_param, model):
     for k, v in original_param.items():
         if k in model_params_keys:
             model_params[k] = v
-    logger.debug(model_params)
+    print(model_params)
     return model_params
 
 def extractModelParametersWithStr(original_param, exclude_str="__"):
@@ -45,7 +36,7 @@ def extractModelParametersWithStr(original_param, exclude_str="__"):
     for k, v in original_param.items():
         if not exclude_str in k:
             model_params[k] = v
-    logger.debug(model_params)
+    print(model_params)
     return model_params
 
 class Averaging_Wrapper(object):
@@ -204,7 +195,7 @@ class Averaging_Wrapper(object):
 
 
         self.best_score_ = best_score_dict
-        logger.debug(self.best_score_)
+        print(self.best_score_)
         
         self.setFeatureImportance(X_train.columns)
 
@@ -369,7 +360,7 @@ class PytrochLightningBase():
 
 
         self.best_score_, self.best_iteration_, _ = self.model.getScoreInfo()
-        logger.debug(self.best_score_)
+        print(self.best_score_)
         
         self.feature_importances_ = np.zeros(len(X_train.columns))
         #self.best_iteration_ = best_epoch#self.model.best_iteration_
@@ -670,7 +661,7 @@ class LGBWrapper_Base(object):
                     )
         print(self.model)
         self.best_score_ = self.model.best_score_
-        logger.debug(self.best_score_)
+        print(self.best_score_)
         self.feature_importances_ = self.model.feature_importances_
         self.best_iteration_ = self.model.best_iteration_
 

@@ -28,14 +28,6 @@ from ErrorAnalysis import ErrorAnalysis
 
 
 
-from log_settings import MyLogger
-
-my_logger = MyLogger()
-logger = my_logger.generateLogger("train", LOG_DIR+"/train.log").getChild(__file__)
-
-
-
-
 def predictNanfromModel(_df, col:str, drop_cols:list=[], nan_pos_flag = False):
 
     df = _df.drop(columns=drop_cols)
@@ -113,19 +105,13 @@ def predictNanfromModel(_df, col:str, drop_cols:list=[], nan_pos_flag = False):
     y_pred_proba = model.predict(df_test, proba=True)
     df_test["pred_nan_{}".format(col)] = np.argmax(y_pred_proba, axis=1)
 
-    logger.debug("after test nan:")
-    logger.debug(df_test["pred_nan_{}".format(col)].value_counts(dropna=False))
-
 
 
     _df["pred_nan_{}".format(col)] = _df[col]
 
-    logger.debug("before df with nan:")
-    logger.debug(_df["pred_nan_{}".format(col)].value_counts(dropna=False))
     _df.loc[df_test.index, "pred_nan_{}".format(col)] = df_test["pred_nan_{}".format(col)]
 
-    logger.debug("after df with nan:")
-    logger.debug(_df["pred_nan_{}".format(col)].value_counts(dropna=False))
+
 
     return _df
 
@@ -171,9 +157,9 @@ class RegressorModel(object):
             permutation_feature:bool = False,
             ):
 
-        logger.debug("===========================================")
-        logger.debug("[MODEL] ::: {}".format(self.model_wrapper.__class__.__name__))
-        logger.debug("[Parameters] ::: {}".format(params))
+        print("===========================================")
+        print("[MODEL] ::: {}".format(self.model_wrapper.__class__.__name__))
+        print("[Parameters] ::: {}".format(params))
 
         """
         Training the model.
@@ -370,7 +356,6 @@ class RegressorModel(object):
                 cpu_stats("after transform")
 
                 self.folds_dict[fold_n]['columns'] = X_train.columns.tolist()
-                logger.debug(self.folds_dict[fold_n]['columns'])
 
                 print("y_train")
                 print(y_train.mean())
@@ -463,8 +448,7 @@ class RegressorModel(object):
             if permutation_feature:
                 df_permutation_total = calcPermutationWeightMean(self.permutation_feature_df_list)
                 df_permutation_total.to_csv(f'{PATH_TO_FEATURES_DIR}/permutation_feature_imp_' + datetime.now().strftime("%Y%m%d_%H%M%S") + ".csv", index=True)
-                logger.debug("permutation feature importance weight under 0")
-                logger.debug(df_permutation_total.loc[df_permutation_total["weight_mean"]<=0].index)
+
 
         # if params['verbose']:
         self.calc_scores_(model_dir_name=params["model_dir_name"])
@@ -600,14 +584,14 @@ class RegressorModel(object):
         return datasets['X_train'], datasets['X_valid'], datasets['X_holdout']
 
     def calc_scores_(self, model_dir_name):
-        logger.debug("\n")
+        print("\n")
         datasets = [k for k, v in [v['scores'] for k, v in self.folds_dict.items()][0].items() if len(v) > 0]
         self.scores = {}
         for d in datasets:
             scores = [v['scores'][d][self.eval_metric] for k, v in self.folds_dict.items()]
             print_text = "[{} : {} : {}] CV mean score on {}: {:.4f} +/- {:.4f} std. ::: {}".format(model_dir_name, self.target_name_idx, self.target_name, d, np.mean(scores), np.std(scores), scores)
-            logger.debug(self.model_wrapper.__class__.__name__)
-            logger.debug(print_text)
+            print(self.model_wrapper.__class__.__name__)
+            print(print_text)
             
             self.scores[d] = np.mean(scores)
 
@@ -634,11 +618,8 @@ class RegressorModel(object):
 
         #with timer("preprocesser"):
         if self.preprocesser is not None:
-            #logger.debug("before preprocesser")
-            #logger.debug(X_test)
+
             X_test = self.preprocesser.transform(X_test)
-            #logger.debug("after preprocesser")
-            #logger.debug(X_test)
 
 
         for i in range(num_model):
@@ -738,13 +719,13 @@ class RegressorModel(object):
         grouped_feats = self.feature_importances.groupby(['feature'])['importance'].mean()
         sort_f = grouped_feats.sort_values(ascending=False)
 
-        logger.debug("Feature Importance")
-        logger.debug(sort_f)
+        print("Feature Importance")
+        print(sort_f)
         for i in range(len(sort_f)):
-            logger.debug("{} : {}".format(sort_f.index[i], sort_f[i]))
+            print("{} : {}".format(sort_f.index[i], sort_f[i]))
 
-        logger.debug("zero Importance")
-        logger.debug("{}".format(grouped_feats[grouped_feats == 0].index))
+        print("zero Importance")
+        print("{}".format(grouped_feats[grouped_feats == 0].index))
 
         if drop_null_importance:
             grouped_feats = grouped_feats[grouped_feats != 0]
@@ -862,7 +843,7 @@ class MainTransformer(BaseEstimator, TransformerMixin):
             #showNAN(data)
 
         if self.sc_ != None:
-            #logger.debug(data[self.standard_scaler_cols_])
+
             data.loc[:, self.standard_scaler_cols_] = data.loc[:, self.standard_scaler_cols_].astype("float64")
             for col in self.standard_scaler_cols_:
                 self.sc_.fit(data.loc[:, col].values.reshape(-1, 1))
@@ -1267,7 +1248,7 @@ class StackingWrapper(object):
 
         self.meta_model.fit(X_train, y_train, X_valid, y_valid, X_holdout, y_holdout, params)
         self.best_score_ = self.meta_model.best_score_
-        logger.debug(self.best_score_)
+        print(self.best_score_)
         self.feature_importances_ = self.meta_model.feature_importances_
 
     def predict(self, X_test, oof_flag=True):
@@ -2197,8 +2178,8 @@ def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred,
 
     
 
-    logger.debug("df_save_oof:{}".format(df_save_oof.shape))
-    logger.debug("df_submit:{}".format(df_final_pred.shape))
+    print("df_save_oof:{}".format(df_save_oof.shape))
+    print("df_submit:{}".format(df_final_pred.shape))
 
 
 
@@ -2296,7 +2277,7 @@ def main(setting_params):
 
 
 
-        logger.debug("df_train:{}".format(df_train.shape))
+        print("df_train:{}".format(df_train.shape))
     else:
         df_train = None
 
@@ -2311,8 +2292,8 @@ def main(setting_params):
 
 
 
-    logger.debug("df_test:{}".format(df_test.shape))
-    logger.debug("df_submit:{}".format(df_submit.shape))
+    print("df_test:{}".format(df_test.shape))
+    print("df_submit:{}".format(df_submit.shape))
 
     cpu_stats("after df initial data load")
 

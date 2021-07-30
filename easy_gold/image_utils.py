@@ -7,6 +7,8 @@ Created on Sat Jul 10 02:41:05 2021
 
 from utils import *
 from PIL import Image
+import imagehash
+import cv2
 
 def getImageStatistics(df, ppath_to_dir, ppath_to_label_dir=None):
 
@@ -78,3 +80,55 @@ def getImageStatistics(df, ppath_to_dir, ppath_to_label_dir=None):
         
 
     return df
+
+
+def getSaliencyImg(path_to_image, salient_type="SR"):
+
+    img = cv2.imread(path_to_image)
+
+    if salient_type == 'SR':
+        saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+    elif salient_type == 'FG':
+        saliency = cv2.saliency.StaticSaliencyFineGrained_create()
+
+
+    (success, saliencyMap) = saliency.computeSaliency(img)
+    #saliencyMap = (saliencyMap * 255).astype("uint8")
+
+
+    return saliencyMap
+
+def getCenteringImgFromSaliencyImg(img, saliency_img):
+
+    img_h, img_w = img.shape[:2]
+    img_center_h = img_h // 2
+    img_center_w = img_w // 2
+
+    salient_pt_h, salient_pt_w = np.unravel_index(np.argmax(saliency_img), saliency_img.shape)
+    
+    offset_x = img_center_w - salient_pt_w
+    offset_y = img_center_h - salient_pt_h
+
+    mat = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+    dst = cv2.warpAffine(img, mat,(img_w,img_h))
+    dst_salient = cv2.warpAffine(saliency_img, mat,(img_w,img_h))
+
+    #pdb.set_trace()
+
+    return dst, dst_salient
+
+
+    
+def getImageHash(pil_img):
+    funcs = [
+        imagehash.average_hash,
+        imagehash.phash,
+        imagehash.dhash,
+        imagehash.whash,
+    ]
+
+    hash = np.array([f(pil_img).hash for f in funcs]).reshape(256)
+
+    #pdb.set_trace()
+
+    return hash

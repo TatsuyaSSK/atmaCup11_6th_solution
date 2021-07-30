@@ -13,31 +13,16 @@ from datetime import datetime
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score, log_loss
-
+from sklearn.metrics import mean_squared_error
 
 
 from utils import *
 from atma11_utils import * 
 
-#from dt_utils import wrmsse_simple_tf
-#from m5_utils import my_squared_error, loss_wrmsse, torch_wrmsse, wrmsse_simple, test3, custom_asymmetric_train, my_loss_rmse, visualizeCompLV
 from model_wrappers import *
 from eda import procEDA
 from MyFoldSplit import TournamentGroupKFold, DummyKfold, SeasonKFold, myStratifiedKFold, myStratifiedKFoldWithGroupID, siteStratifiedPathGroupKFold, StratifiedKFoldWithGroupID
-#from preprocess import procTest
-
-
-
-
-
-from log_settings import MyLogger
-
-my_logger = MyLogger()
-logger = my_logger.generateLogger("train", LOG_DIR+"/train.log").getChild(__file__)
-
-if not ON_KAGGLE:
-    slack = slackweb.Slack(url="https://hooks.slack.com/services/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")
-
+from ErrorAnalysis import ErrorAnalysis
 
 
 
@@ -120,19 +105,13 @@ def predictNanfromModel(_df, col:str, drop_cols:list=[], nan_pos_flag = False):
     y_pred_proba = model.predict(df_test, proba=True)
     df_test["pred_nan_{}".format(col)] = np.argmax(y_pred_proba, axis=1)
 
-    logger.debug("after test nan:")
-    logger.debug(df_test["pred_nan_{}".format(col)].value_counts(dropna=False))
-
 
 
     _df["pred_nan_{}".format(col)] = _df[col]
 
-    logger.debug("before df with nan:")
-    logger.debug(_df["pred_nan_{}".format(col)].value_counts(dropna=False))
     _df.loc[df_test.index, "pred_nan_{}".format(col)] = df_test["pred_nan_{}".format(col)]
 
-    logger.debug("after df with nan:")
-    logger.debug(_df["pred_nan_{}".format(col)].value_counts(dropna=False))
+
 
     return _df
 
@@ -178,9 +157,9 @@ class RegressorModel(object):
             permutation_feature:bool = False,
             ):
 
-        logger.debug("===========================================")
-        logger.debug("[MODEL] ::: {}".format(self.model_wrapper.__class__.__name__))
-        logger.debug("[Parameters] ::: {}".format(params))
+        print("===========================================")
+        print("[MODEL] ::: {}".format(self.model_wrapper.__class__.__name__))
+        print("[Parameters] ::: {}".format(params))
 
         """
         Training the model.
@@ -262,8 +241,11 @@ class RegressorModel(object):
 
 
         else:
-
-            self.df_oof = pd.DataFrame(index=X.index, columns= y.columns)
+            
+            if self.n_target == len(y.columns):
+                self.df_oof = pd.DataFrame(index=X.index, columns= y.columns)
+            else:
+                self.df_oof = pd.DataFrame(index=X.index, columns= [f"target_{i}" for i in range(self.n_target)])
 
             if X_holdout is not None:
                 X_holdout = X_holdout[self.columns]
@@ -374,7 +356,6 @@ class RegressorModel(object):
                 cpu_stats("after transform")
 
                 self.folds_dict[fold_n]['columns'] = X_train.columns.tolist()
-                logger.debug(self.folds_dict[fold_n]['columns'])
 
                 print("y_train")
                 print(y_train.mean())
@@ -400,14 +381,15 @@ class RegressorModel(object):
 
                 ret = -1
                 if params["use_old_file"]:
-                    ret = model.procLoadModel(params["model_dir_name"], prefix=f"fold_{fold_n}")
+                    ret = model.procLoadModel(params["model_dir_name"], prefix=f"fold_{fold_n}", params=params)
 
                     model.feature_importances_ = np.zeros(len(X_train.columns)) #X_train.columns))
 
                 if ret < 0:
                     if (not ON_KAGGLE) and (params["no_wandb"]==False):
                         params["wb_run_name"] = wb_run_name_base + f"_fold_{fold_n}"
-
+                    
+                    params["fold_n"] = fold_n
                     model.fit(X_train, y_train, X_valid, y_valid, X_hold, y_holdout, params=params)
                     model.procModelSaving(params["model_dir_name"], prefix=f"fold_{fold_n}__iter_{model.best_iteration_}", bs=model.best_score_)
 
@@ -466,11 +448,10 @@ class RegressorModel(object):
             if permutation_feature:
                 df_permutation_total = calcPermutationWeightMean(self.permutation_feature_df_list)
                 df_permutation_total.to_csv(f'{PATH_TO_FEATURES_DIR}/permutation_feature_imp_' + datetime.now().strftime("%Y%m%d_%H%M%S") + ".csv", index=True)
-                logger.debug("permutation feature importance weight under 0")
-                logger.debug(df_permutation_total.loc[df_permutation_total["weight_mean"]<=0].index)
+
 
         # if params['verbose']:
-        self.calc_scores_()
+        self.calc_scores_(model_dir_name=params["model_dir_name"])
 
         if self.post_processor is not None:
             cpu_stats("before post_preprocesser")
@@ -484,6 +465,8 @@ class RegressorModel(object):
 
 
         if (plot==True) & (ON_KAGGLE==False):
+
+            #self.errorAnalysis(self.df_oof, y, self.valid_indices, params)
 
             if self.n_target  == 1:
 
@@ -506,6 +489,37 @@ class RegressorModel(object):
 
                 plt.savefig(os.path.join(str(PATH_TO_GRAPH_DIR), "{}_result_fig.png".format(datetime.now().strftime("%Y%m%d_%H%M%S"))))
                 plt.close()
+
+
+    # def errorAnalysis(self, df_oof, df_y, valid_indices, params):
+
+    #     for target_col in params["target_name"]:
+
+    #         prefix=f'{params["model_dir_name"]}_{target_col}'
+    #         se_oof = df_oof.iloc[valid_indices][target_col]
+    #         se_y = df_y.iloc[valid_indices][target_col]
+    #         pdb.set_trace()
+
+    #         compPredTarget(se_oof.values, se_y.values, index_list=se_y.index, title_str=f"{prefix}_oof_diff", lm_flag=True)
+
+    #         fig, ax = plt.subplots(figsize=(16, 12))
+    #         plt.subplot(2, 2, 1)
+    #         self.plot_feature_importance(top_n=20)
+    #         plt.subplot(2, 2, 2)
+    #         self.plot_metric()
+    #         plt.subplot(2, 2, 3)
+    #         plt.hist(se_y.values.reshape(-1, 1) - se_oof.values.reshape(-1, 1))
+    #         plt.title('Distribution of errors')
+    #         plt.subplot(2, 2, 4)
+    #         plt.hist(se_oof.values.reshape(-1, 1))
+    #         plt.title('Distribution of oof predictions');
+
+    #         plt.savefig(str(PATH_TO_GRAPH_DIR /f"{prefix}_result_fig.png"))
+    #         plt.close()
+
+    #         pdb.set_trace()
+                
+
 
 
     def loadModels(self, params, eval_metric, folds):
@@ -569,18 +583,16 @@ class RegressorModel(object):
 
         return datasets['X_train'], datasets['X_valid'], datasets['X_holdout']
 
-    def calc_scores_(self):
-        logger.debug("\n")
+    def calc_scores_(self, model_dir_name):
+        print("\n")
         datasets = [k for k, v in [v['scores'] for k, v in self.folds_dict.items()][0].items() if len(v) > 0]
         self.scores = {}
         for d in datasets:
             scores = [v['scores'][d][self.eval_metric] for k, v in self.folds_dict.items()]
-            print_text = "[{} : {}] CV mean score on {}: {:.4f} +/- {:.4f} std. ::: {}".format(self.target_name_idx, self.target_name, d, np.mean(scores), np.std(scores), scores)
-            logger.debug(self.model_wrapper.__class__.__name__)
-            logger.debug(print_text)
-            if not ON_KAGGLE:
-                slack.notify(text=self.model_wrapper.__class__.__name__)
-                slack.notify(text=print_text)
+            print_text = "[{} : {} : {}] CV mean score on {}: {:.4f} +/- {:.4f} std. ::: {}".format(model_dir_name, self.target_name_idx, self.target_name, d, np.mean(scores), np.std(scores), scores)
+            print(self.model_wrapper.__class__.__name__)
+            print(print_text)
+            
             self.scores[d] = np.mean(scores)
 
     def predict(self, X_test, proba:bool = False, averaging: str = 'usual', regression_flag=True):
@@ -606,11 +618,8 @@ class RegressorModel(object):
 
         #with timer("preprocesser"):
         if self.preprocesser is not None:
-            #logger.debug("before preprocesser")
-            #logger.debug(X_test)
+
             X_test = self.preprocesser.transform(X_test)
-            #logger.debug("after preprocesser")
-            #logger.debug(X_test)
 
 
         for i in range(num_model):
@@ -672,9 +681,11 @@ class RegressorModel(object):
             full_prediction = full_prediction.mean(axis=0)
         else:
             
+            full_prediction = full_prediction.mean(axis=0)
 
-            from scipy import stats
-            full_prediction = stats.mode(full_prediction)[0][0]
+            #from scipy import stats
+            #full_prediction = stats.mode(full_prediction)[0][0]
+
             #full_prediction = np.argmax(full_prediction, axis=1)
 
         return full_prediction
@@ -708,13 +719,13 @@ class RegressorModel(object):
         grouped_feats = self.feature_importances.groupby(['feature'])['importance'].mean()
         sort_f = grouped_feats.sort_values(ascending=False)
 
-        logger.debug("Feature Importance")
-        logger.debug(sort_f)
+        print("Feature Importance")
+        print(sort_f)
         for i in range(len(sort_f)):
-            logger.debug("{} : {}".format(sort_f.index[i], sort_f[i]))
+            print("{} : {}".format(sort_f.index[i], sort_f[i]))
 
-        logger.debug("zero Importance")
-        logger.debug("{}".format(grouped_feats[grouped_feats == 0].index))
+        print("zero Importance")
+        print("{}".format(grouped_feats[grouped_feats == 0].index))
 
         if drop_null_importance:
             grouped_feats = grouped_feats[grouped_feats != 0]
@@ -832,7 +843,7 @@ class MainTransformer(BaseEstimator, TransformerMixin):
             #showNAN(data)
 
         if self.sc_ != None:
-            #logger.debug(data[self.standard_scaler_cols_])
+
             data.loc[:, self.standard_scaler_cols_] = data.loc[:, self.standard_scaler_cols_].astype("float64")
             for col in self.standard_scaler_cols_:
                 self.sc_.fit(data.loc[:, col].values.reshape(-1, 1))
@@ -1028,55 +1039,6 @@ class TargetEncodingTransormer(BaseEstimator, TransformerMixin):
         sys.exit(-1)
         return
 
-#class CategoricalTransformer(BaseEstimator, TransformerMixin):
-#
-#    def __init__(self, cat_cols=None, drop_original: bool = False, encoder=OrdinalEncoder()):
-#        """
-#        Categorical transformer. This is a wrapper for categorical encoders.
-#
-#        :param cat_cols:
-#        :param drop_original:
-#        :param encoder:
-#        """
-#        self.cat_cols = cat_cols
-#        self.drop_original = drop_original
-#        self.encoder = encoder
-#        self.default_encoder = OrdinalEncoder()
-#
-#    def fit(self, X, y=None):
-#
-#        if self.cat_cols is None:
-#            kinds = np.array([dt.kind for dt in X.dtypes])
-#            is_cat = kinds == 'O'
-#            self.cat_cols = list(X.columns[is_cat])
-#        self.encoder.set_params(cols=self.cat_cols)
-#        self.default_encoder.set_params(cols=self.cat_cols)
-#
-#        self.encoder.fit(X[self.cat_cols], y)
-#        self.default_encoder.fit(X[self.cat_cols], y)
-#
-#        return self
-#
-#    def transform(self, X, y=None):
-#        data = copy.deepcopy(X)
-#        new_cat_names = ['{}_encoded'.format(col) for col in self.cat_cols]
-#        encoded_data = self.encoder.transform(data[self.cat_cols])
-#        if encoded_data.shape[1] == len(self.cat_cols):
-#            data[new_cat_names] = encoded_data
-#        else:
-#            pass
-#
-#        if self.drop_original:
-#            data = data.drop(self.cat_cols, axis=1)
-#        else:
-#            data[self.cat_cols] = self.default_encoder.transform(data[self.cat_cols])
-#
-#        return data
-#
-#    def fit_transform(self, X, y=None, **fit_params):
-#        data = copy.deepcopy(X)
-#        self.fit(data)
-#        return self.transform(data)
 
 
 def simplePredictionSet(df_train, df_test, target_col_list:list,
@@ -1135,6 +1097,8 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
     params["fold2"] = setting_params["fold2"]
     params["num_class"] = setting_params["num_class"]
     params["no_wandb"] = setting_params["no_wandb"]
+    params["num_tta"] = setting_params["num_tta"]
+    params["pretrain_model_dir_name"] = setting_params["pretrain_model_dir_name"]
 
     params["use_columns"] = use_columns
 
@@ -1201,7 +1165,10 @@ def simplePredictionSet(df_train, df_test, target_col_list:list,
 
 
         y_pred = model.predict(df_test, regression_flag=(setting_params["type"]=="regression"))
-        df_y_pred = pd.DataFrame(y_pred, index=df_test.index, columns=target_col_list)
+        if len(target_col_list) == y_pred.shape[1]:
+            df_y_pred = pd.DataFrame(y_pred, index=df_test.index, columns=target_col_list)
+        else:
+            df_y_pred = pd.DataFrame(y_pred, index=df_test.index, columns=[f"target_{i}" for i in range(y_pred.shape[1])])
         print(f"df_y_pred : {df_y_pred}")
 
 
@@ -1277,16 +1244,17 @@ class StackingWrapper(object):
         print("X_valid:{}".format(X_valid.shape))
         print(X_valid.columns)
         print("y_valid:{}".format(y_valid.shape))
+        
 
         self.meta_model.fit(X_train, y_train, X_valid, y_valid, X_holdout, y_holdout, params)
         self.best_score_ = self.meta_model.best_score_
-        logger.debug(self.best_score_)
+        print(self.best_score_)
         self.feature_importances_ = self.meta_model.feature_importances_
 
-    def predict(self, X_test):
+    def predict(self, X_test, oof_flag=True):
         print("X_test:{}".format(X_test.shape))
 
-        return self.meta_model.predict(X_test)
+        return self.meta_model.predict(X_test, oof_flag=oof_flag)
 
 class SimpleStackingWrapper(StackingWrapper):
 
@@ -1297,6 +1265,7 @@ class SimpleStackingWrapper(StackingWrapper):
         self.meta_model = meta_model
         self.target_col_list = target_col_list
         self.initial_params = self.meta_model.initial_params
+        self.best_iteration_ = 1
 
         self.df_meta_train, self.df_meta_test = self.setMetaFromFiles(path_to_meta_feature_dir)
 
@@ -1310,25 +1279,7 @@ class SimpleStackingWrapper(StackingWrapper):
         print(f"idx1:{len(idx1)}")
         print(f"idx2:{len(idx2)}")
 
-        #for mRNAdata
-        meta_train_mol_ids = df_train.loc[self.df_meta_train.index,"id"].unique()
-        scored_length = df_train.loc[self.df_meta_train.index,"seq_scored"].values[0]
-        print(f"meta_train_mol_ids : {len(meta_train_mol_ids)}")
-        print(f"scored_length:{scored_length}")
-        scored_mol_pos_ids = [f"{mol_id}_{i}" for mol_id in meta_train_mol_ids for i in range(scored_length)]
-        print(f"scored_mol_pos_ids : {len(scored_mol_pos_ids)}")
-
-        self.df_meta_train = self.df_meta_train.loc[scored_mol_pos_ids, :]
-        print(self.df_meta_train)
-
-        #print(idx1-idx2)
-        #print(idx2-idx1)
-        #sys.exit()
-
-        #for mRNA
-
-
-        #self.df_meta_train = self.df_meta_train.loc[self.df_meta_train.index.isin(df_train.index),:]
+        
 
 
 
@@ -1343,7 +1294,7 @@ class SimpleStackingWrapper(StackingWrapper):
             print(oof_f_name)
 
             df_oof = pd.read_csv(str(f.parent/oof_f_name), index_col=0)[self.target_col_list]
-            df_oof.sort_values('id_seqpos',inplace=True, ascending=True)
+
             print(f"df_oof : {df_oof.shape}")
             #oof_list.append(df_oof[self.target_col].values.reshape(-1, 1))
             oof_list.append(df_oof)
@@ -1354,8 +1305,14 @@ class SimpleStackingWrapper(StackingWrapper):
             pred_f_name = oof_f_name.replace("oof", "submission")
             print(pred_f_name)
 
-            df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col_list]
-            df_pred.sort_values('id_seqpos',inplace=True, ascending=True)
+            #for atam11, commentout!
+            if PROJECT_NAME == "atma11":
+                df_pred = pd.read_csv(str(f.parent/pred_f_name))[self.target_col_list]
+            else:
+                df_pred = pd.read_csv(str(f.parent/pred_f_name), index_col=0)[self.target_col_list]
+            
+
+
             print(f"df_pred : {df_pred.shape}")
             #y_pred_list.append(df_pred[self.target_col].values.reshape(-1, 1))
             y_pred_list.append(df_pred)
@@ -1370,30 +1327,15 @@ class SimpleStackingWrapper(StackingWrapper):
 
         return df_oof, df_pred
 
-def interpolationSpline(df_y_pred, df_oof, true_y):
-    
-    dat = list(zip(df_oof.values.flatten(), true_y))
-    dat = sorted(dat, key = lambda x: x[0])
-    
-    
-    datdict = {}
-    for k in range(len(dat)):
-        datdict[dat[k][0]]= dat[k][1]
-    
-    from scipy.interpolate import UnivariateSpline
-    spline_model = UnivariateSpline(list(datdict.keys()), list(datdict.values()))
-    
- 
-    spline_fit = np.clip(spline_model(np.clip(df_oof.values.flatten().astype(float), -30, 30)), 0.025, 0.975)
-    
-    
-    print_text = 'spline fit logloss is {:.5f}'.format(log_loss(true_y, spline_fit))
-    slack.notify(text=print_text)
-    print(print_text) 
-    
-    y_pred_fit = np.clip(spline_model(np.clip(df_y_pred.values.flatten().astype(float), -30, 30)), 0.025, 0.975)
-    
-    return y_pred_fit, spline_fit
+    def procModelSaving(self, model_dir_name, prefix, bs):
+
+        ppath_to_save_dir = PATH_TO_MODEL_DIR / model_dir_name
+        if not ppath_to_save_dir.exists():
+            ppath_to_save_dir.mkdir()
+        
+        pass
+
+
 
 def calcWeight(df_train, df_test):
 
@@ -1449,6 +1391,25 @@ def calcMetaWeight(df_train, df_test, setting_params):
 
 gl_norm_dict = {}
 
+def addPseudoLabeling(df_train, df_test, target_col_list):
+
+    df_pseudo = df_test.copy()
+    df_sub = pd.read_csv(OUTPUT_DIR/"20210718-182046_20210718_182054_Averaging_Wrapper--0.675055--_submission.csv")
+
+    for col in target_col_list:
+        df_pseudo[col] = df_sub[col]
+
+        if col == "target":
+            df_pseudo[col] = df_pseudo[col].map(lambda x: 0 if x < 0.5 else (1 if x < 1.5 else (2 if x < 2.5 else 3)))
+        else:
+            df_pseudo[col] = df_pseudo[col].map(lambda x: 0 if x < 0.5 else 1)
+    
+    max_art_id = df_train["art_series_id"].max()
+    df_pseudo["art_series_id"] = np.array(range(max_art_id+1, df_pseudo.shape[0]+max_art_id+1))
+    df_train = pd.concat([df_train, df_pseudo])
+    
+    return df_train
+
 def preproc(df_train, df_test, target_col_list, setting_params):
 
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
@@ -1458,6 +1419,10 @@ def preproc(df_train, df_test, target_col_list, setting_params):
         pass
 
     else:
+
+        if setting_params["pseudo_labeling"]:
+            df_train =addPseudoLabeling(df_train, df_test, target_col_list)
+
 
         df_train = drop_art_series(df_train)
 
@@ -1534,6 +1499,57 @@ def postproc(df_y_pred, df_oof, df_train, df_test, setting_params):
 
     return df_y_pred, df_oof
 
+def calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, setting_params):
+
+    if PROJECT_NAME == "atma11":
+        
+        if setting_params["type"]=="regression":
+
+
+            df_oof = df_oof.reindex(df_train.index)
+            y_true = df_train[["target"]].values * 3 if ((setting_params["mode"] != "ave") and (setting_params["mode"] != "stack")) else df_train[["target"]].values
+            y_oof_pred = df_oof[["target"]].values
+            
+        else:
+            df_oof = df_oof.reindex(df_train.index)
+            y_true = df_train[["target"]].values
+
+            y_oof_pred = force_continuous(df_oof.values, alpha=0.8)
+            #y_oof_pred = np.argmax(df_oof.values, axis=1)
+            #y_oof_pred = np.sum(df_oof.values*np.arange(4), axis=1)
+
+
+        from sklearn.metrics import mean_squared_error
+        final_score = np.sqrt(mean_squared_error(y_true, y_oof_pred))
+
+
+
+        #final_eval_score_dict=calcEvalScoreDict(y_true=y_true, y_pred=y_oof_pred, eval_metric_func_dict=eval_metric_func_dict)
+        #pdb.set_trace()
+
+
+        print_text = f"{setting_params['model_dir_name']} final score : {final_score}"
+        print(print_text)
+
+
+        df_train["target"] = df_train["target"].values * 3.0 if setting_params["mode"] != "ave" else df_train["target"].values
+        myEA = ErrorAnalysis(_df_train=df_train, _df_test=df_test, 
+                            _index_col=df_train.index.name, _target_col_list=setting_params["target"], 
+                            _prefix=setting_params['model_dir_name'])
+
+        #myEA.procAnalysis(df_oof, df_y_pred, index_list=df_oof.index)
+        #myEA.procClass(df_oof, df_y_pred, index_list=df_oof.index)
+
+
+
+    else:
+        final_score = np.nan
+    return final_score
+
+
+
+
+
 
 def trainMain(df_train, df_test, target_col_list, setting_params):
 
@@ -1563,12 +1579,15 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
     n_fold = setting_params["fold"]
     if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
-        folds = KFold(n_fold)
+        #folds = KFold(n_fold)
+        folds = StratifiedKFold(n_splits=n_fold, shuffle=True, random_state=2020)
+        
 
     elif setting_params["mode"]=="lgb":
         #folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="path")
         #folds = myStratifiedKFoldWithGroupID(n_splits=n_fold, shuffle=False, group_id_col="path", stratified_target_id="floor")
-        folds = siteStratifiedPathGroupKFold(df_test=df_test, n_splits=n_fold, group_id_col="path", stratified_target_id="site_id")
+        #folds = siteStratifiedPathGroupKFold(df_test=df_test, n_splits=n_fold, group_id_col="path", stratified_target_id="site_id")
+        folds = StratifiedKFoldWithGroupID(n_splits=n_fold, group_id_col="art_series_id", stratified_target_id="target")
 
 
     else:
@@ -1601,21 +1620,24 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     from sklearn.metrics import roc_auc_score
 
 
-    if (setting_params["mode"]=="ave") | (setting_params["mode"]=="stack"):
-        
-        
-    
+    if  (setting_params["mode"]=="stack"):
         
         def my_eval(y_pred, y_true):
-            
-            preds = []
-            for i in y_pred:
-                preds.append([1-i, i])
-
-            return log_loss(y_true, preds)
+            #print(f"y_true: {y_true.shape}")
+            #print(f"y_pred: {y_pred.shape}")
+            return 'rmse', np.sqrt(mean_squared_error(y_true, y_pred)), False
         
-        eval_metric_name = 'binary_logloss'
+
+        eval_metric_name = 'rmse'
         eval_metric_func_dict= {eval_metric_name:my_eval}
+
+    elif (setting_params["mode"]=="ave"):
+
+        def my_eval(y_pred, y_true):
+            return np.sqrt(mean_squared_error(y_true, y_pred))
+
+        eval_metric_name = 'rmse'
+        eval_metric_func_dict= {eval_metric_name:my_eval}        
 
     elif (setting_params["mode"]=="lgb"):
 
@@ -1638,7 +1660,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
 
         else:
-            eval_metric_name =  'l1'
+            eval_metric_name =  'rmse'
             eval_metric_func_dict= {eval_metric_name:eval_metric_name}
             
 
@@ -1658,7 +1680,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         #     intermediate = np.sqrt(np.power(diff_x, 2) + np.power(diff_y, 2))# + 15 * np.abs(fhat-f)
         #     return intermediate.sum()/xhat.shape[0]
         
-        from sklearn.metrics import mean_squared_error
+        
         def my_eval(y_pred, y_true):
 
             if setting_params["type"]=="regression":
@@ -1688,8 +1710,10 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
                     y_true = np.where(y_true > 7, 3, y_true)
             else:
 
-                #
-                y_pred = np.argmax(y_pred, axis=1)
+                y_true = np.argmax(y_true, axis=1)
+                y_pred = force_continuous(y_pred)
+                #y_pred = np.sum(y_pred*np.arange(4), axis=1)
+                #y_pred = np.argmax(y_pred, axis=1)
 
             #pdb.set_trace()
             return np.sqrt(mean_squared_error(y_true, y_pred))
@@ -1699,32 +1723,65 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
             return my_eval(y_pred=y_pred[:, 0], y_true=y_true[:, 0])
 
+        num_tech=3
         from sklearn.metrics import f1_score
         def eval_multi_tech(y_pred, y_true):
 
-            y_tech = y_pred[:, 1:4]
+            y_tech = y_pred[:, 1:num_tech+1]
             y_tech = np.where(y_tech > 0.5, 1, 0)
 
             #pdb.set_trace()
-            return f1_score(y_true=y_true[:, 1:4], y_pred=y_tech, average='samples', zero_division=0)
+            return f1_score(y_true=y_true[:, 1:num_tech+1], y_pred=y_tech, average='samples', zero_division=0)
 
         def eval_multi_material(y_pred, y_true):
 
-            y_material = y_pred[:, 4:]
+            y_material = y_pred[:, num_tech+1:]
             y_material = np.where(y_material > 0.5, 1, 0)
 
             #pdb.set_trace()
-            return f1_score(y_true=y_true[:, 4:], y_pred=y_material, average='samples', zero_division=0)
-            
+            return f1_score(y_true=y_true[:, num_tech+1:], y_pred=y_material, average='samples', zero_division=0)
 
-        if setting_params["num_class"] == 1:
+        def eval_loss(y_pred, y_true):
+
+            #pdb.set_trace()
+            return y_pred
+            
+        if setting_params["type"]=="regression":
+
+            if setting_params["num_class"] == 1:
+
+                if setting_params["ssl_flag"]:
+                    eval_metric_name = "eval_loss"
+                    eval_metric_func_dict = {"eval_loss":eval_loss}
+                else:
+
+                    eval_metric_name = 'rmse'
+                    eval_metric_func_dict= {eval_metric_name:my_eval}
+
+                
+
+                
+
+
+
+            elif setting_params["num_class"] >= 4:
+                
+                if setting_params["ssl_flag"]:
+                    eval_metric_name = "eval_loss"
+                    eval_metric_func_dict = {"eval_loss":eval_loss}
+                else:
+
+                    eval_metric_name = 'rmse'
+                    eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
+                    eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
+                    #eval_metric_func_dict["mean_f1_material"] = eval_multi_material
+
+                
+        else:
+
             eval_metric_name = 'rmse'
             eval_metric_func_dict= {eval_metric_name:my_eval}
-        elif setting_params["num_class"] >= 4:
-            eval_metric_name = 'rmse'
-            eval_metric_func_dict= {eval_metric_name:eval_multi_rmse}
-            eval_metric_func_dict["mean_f1_tech"] = eval_multi_tech
-            eval_metric_func_dict["mean_f1_material"] = eval_multi_material
+
 
 
 
@@ -1780,12 +1837,6 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
     if (setting_params["mode"]=="lgb") | (setting_params["mode"]=="lgb2"):
 
         drop_cols=[
-            'timestamp', 
-            'near_floor',
-            
-             'first_ts', 'last_ts', 
-
-       
             ]
 
      
@@ -1799,11 +1850,11 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
             if col in use_columns:
                 use_columns.remove(col)
 
-        #groupK_id_list = ["user_id"]
-        id_list = ['path', "site_id", ]#['team1ID', 'team2ID',]
-        time_list = ['first_ts', 'last_ts', 'timestamp',  ]
 
-        rssi_list = getColumnsFromParts(["wifi_rssi", "ib_rssi"], use_columns)
+        id_list = ['art_series_id',]
+        #time_list = ['first_ts', 'last_ts', 'timestamp',  ]
+
+        meta_list = getColumnsFromParts(["techniques_", "materials_"], use_columns)
         #rssi_list = getColumnsFromParts(["ib_rssi"], use_columns)
         #for col in rssi_list:
             #if df_train[col].dtype=="object":
@@ -1813,7 +1864,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
         #pdb.set_trace()
         embedding_features_list= id_list #+ #['brand', 'model', 'android_name', 'api_level', 'version_name', 'version_code'] + id_list
-        continuous_features_list = rssi_list +time_list
+        continuous_features_list = meta_list + ["pred_target"]
                                 # + [
                                 #    #'wifi_ssid', 'wifi_bssid', 'wifi_rssi', 'wifi_frequency', 'wifi_lastseen_ts', 
                                 #    # "mean_max_floor", "mean_max_floor_by_path", "count_max_floor", "count_max_floor_by_path",
@@ -1937,7 +1988,7 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
         transformers0 = {'ft': ft_none}
         final_tf_dict = transformers0
     elif (setting_params["mode"]=="lgb") :
-        ft = DropFeatureTransformer(drop_columns=["path"])
+        ft = DropFeatureTransformer(drop_columns=["art_series_id"])
         transformers1 = {'ft': ft}
         final_tf_dict = transformers1
 
@@ -2015,18 +2066,25 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
     if (setting_params["mode"]=="nn"):
 
-        # df_all = pd.concat([df_train, df_test], sort=False)
-        # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
-        #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
-        #model_wrapper = ResNet_Wrapper(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"))
-        model_wrapper = multiLabelNet(num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
-                                    tech_weight=setting_params["tech_weight"], material_weight = setting_params["material_weight"])
-        
+        if setting_params["ssl_flag"]:
+            model_wrapper = SSL_Wrapper(base_name=setting_params["model_name"], img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), salient_flag=setting_params["salient_flag"],)
+        else:
 
-        #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
-        #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+            # df_all = pd.concat([df_train, df_test], sort=False)
+            # model_lstm_wrapper=LSTM_Wrapper(df_all=df_all, sequence_features_list=sequence_list, continuous_features_list=continuous_features_list, embedding_category_features_list=embedding_category_list, num_target=len(target_col_list),
+            #                                 sequence_index_col="id", input_sequence_len_col="seq_length", output_sequence_len_col="seq_scored", weight_col="weight",emb_dropout_rate=0.5)
+            
+            if setting_params["model_name"]=="resnet18":
+                model_wrapper = ResNet_Wrapper(base_name=setting_params["model_name"],img_size=setting_params["img_size"],num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), salient_flag=setting_params["salient_flag"])
+            else:          
+                model_wrapper = multiLabelNet(base_name=setting_params["model_name"], img_size=setting_params["img_size"], num_out=setting_params["num_class"], regression_flag=(setting_params["type"]=="regression"), 
+                                            salient_flag=setting_params["salient_flag"], tech_weight=None, material_weight =None)
+                
 
-        
+            #model_wrapper = Transformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+            #model_wrapper = LastQueryTransformer_Wrapper(sequence_features_list=sequence_list, continuous_features_list=continuous_features_list,)
+
+            
 
 
 
@@ -2048,10 +2106,11 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
 
     if (setting_params["mode"]=="stack"):
-        meta_model = Ridge_Wrapper()
+        meta_model =  LGBWrapper_regr()#Lasso_Wrapper()#Lasso_Wrapper()#ElasticNetRegression_Wrapper()
         model_wrapper = SimpleStackingWrapper(df_train, df_test, target_col_list,  meta_model, str(OUTPUT_DIR / setting_params["stacking_dir_name"]))
         df_train = model_wrapper.df_meta_train
         df_test = model_wrapper.df_meta_test
+        
 
 
     if (setting_params["mode"]=="ave"):
@@ -2073,9 +2132,22 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 
     df_y_pred, df_oof = postproc(df_y_pred, df_oof, df_train, df_test, setting_params)
 
+    final_score = calcFinalScore(df_train, df_test, df_oof, df_y_pred, eval_metric_func_dict, setting_params)
 
-    return df_y_pred, df_oof, valid_score, model_name
 
+    return df_y_pred, df_oof, valid_score, model_name, final_score
+
+
+def sub_class(df_final_pred):
+    #pdb.set_trace()
+
+    prob_val = df_final_pred.values
+    df_final_pred["target_int"] = np.argmax(prob_val, axis=1)
+    df_final_pred["target"] = force_continuous(prob_val)
+
+    df_final_pred["target_prob"] = np.max(prob_val, axis=1)
+
+    return df_final_pred
 
 
 
@@ -2083,11 +2155,16 @@ def trainMain(df_train, df_test, target_col_list, setting_params):
 def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred, df_oof, valid_score, model_name, setting_params):
 
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
-    prefix = "{}_{}--{:.6f}--".format(now, model_name,valid_score)
+    prefix = "{}_{}_{}--{:.6f}--".format(setting_params["model_dir_name"], now, model_name,valid_score)
 
 
-    df_save_oof = df_oof.reset_index()
     
+    if setting_params["type"]=="classification":
+        df_oof = sub_class(df_oof)
+        df_y_pred = sub_class(df_y_pred)
+    
+    df_save_oof = df_oof.reset_index()
+
     path_to_output_oof = path_to_output_dir/"oof.csv" if ON_KAGGLE else path_to_output_dir / "{}_oof.csv".format(prefix)
     df_save_oof.to_csv(path_to_output_oof, index=False)
 
@@ -2099,10 +2176,10 @@ def saveSubmission(path_to_output_dir, df_train, df_test, target_col, df_y_pred,
     path_to_output = path_to_output_dir/"submission.csv" if ON_KAGGLE else path_to_output_dir / "{}_submission.csv".format(prefix)
     df_final_pred.to_csv(path_to_output, index=False)
 
-   
+    
 
-    logger.debug("df_save_oof:{}".format(df_save_oof.shape))
-    logger.debug("df_submit:{}".format(df_final_pred.shape))
+    print("df_save_oof:{}".format(df_save_oof.shape))
+    print("df_submit:{}".format(df_final_pred.shape))
 
 
 
@@ -2164,18 +2241,18 @@ def main(setting_params):
                             "techniques_pen",
                             "techniques_counterproof",
 
-                            "materials_cardboard", 
+                            #"materials_cardboard",  #
                             "materials_chalk",
                             "materials_deck paint",
-                            "materials_gouache (paint)",
+                            #"materials_gouache (paint)", #
                             "materials_graphite (mineral)",
                             "materials_ink",
-                            "materials_oil paint (paint)",
-                            "materials_paint (coating)",
+                            #"materials_oil paint (paint)", #
+                            #"materials_paint (coating)",#
                             "materials_paper",
-                            "materials_parchment (animal material)",
+                            #"materials_parchment (animal material)",#
                             "materials_pencil",
-                            "materials_prepared paper",
+                            #"materials_prepared paper",#
                             "materials_watercolor (paint)",
                             
                             ] #year_bin50
@@ -2183,14 +2260,16 @@ def main(setting_params):
         else:
             target_cols= ["target"]
             setting_params["num_class"] = 4
-   
+    elif (mode == "ave") or (mode == "stack"):
+        target_cols= ["target"]
+        setting_params["num_class"] = len(target_cols)
     
 
 
 
     if setting_params["pred_only"]==False:
         
-        if mode == "ave":
+        if (mode == "ave")  or (mode == "stack"):
             mode = "nn"
 
         df_train = pd.read_pickle(PROC_DIR / f'df_proc_train_{mode}.pkl')
@@ -2198,7 +2277,7 @@ def main(setting_params):
 
 
 
-        logger.debug("df_train:{}".format(df_train.shape))
+        print("df_train:{}".format(df_train.shape))
     else:
         df_train = None
 
@@ -2213,8 +2292,8 @@ def main(setting_params):
 
 
 
-    logger.debug("df_test:{}".format(df_test.shape))
-    logger.debug("df_submit:{}".format(df_submit.shape))
+    print("df_test:{}".format(df_test.shape))
+    print("df_submit:{}".format(df_submit.shape))
 
     cpu_stats("after df initial data load")
 
@@ -2230,7 +2309,7 @@ def main(setting_params):
 
     if (mode  == "nn")| (mode  == "lgb")| (mode == "ave") | (mode == "stack"):
 
-        df_y_pred_each, df_oof, valid_score, model_name = trainMain(df_train, df_test, target_cols, setting_params)
+        df_y_pred_each, df_oof, valid_score, model_name, final_score = trainMain(df_train, df_test, target_cols, setting_params)
         
 
         if setting_params["debug"]:
@@ -2243,7 +2322,7 @@ def main(setting_params):
             df_oof = df_oof.rename(columns={target_cols[0]:"target"})
             df_y_pred = df_y_pred.rename(columns={target_cols[0]:"target"})
 
-        saveSubmission(OUTPUT_DIR, df_train, df_test, target_cols, df_y_pred, df_oof, valid_score, model_name, setting_params)
+        saveSubmission(OUTPUT_DIR, df_train, df_test, target_cols, df_y_pred, df_oof, final_score, model_name, setting_params)
 
 
 def argParams():
@@ -2264,13 +2343,22 @@ def argParams():
     parser.add_argument('-u', '--use_old_file', action="store_true")
     parser.add_argument('-train_plot', '--train_plot', action="store_true")
 
-    parser.add_argument('-no_wb', '--no_wandb', action="store_true")
+    parser.add_argument('-no_wb', '--no_wandb', action="store_false")
 
     parser.add_argument('-model_dir', '--model_dir_name', type=str)
+    parser.add_argument('-pretrain', '--pretrain_model_dir_name', type=str)
     parser.add_argument('-pred', '--pred_only', action="store_true")
     parser.add_argument('-pred2', '--pred2_only', action="store_true")
     parser.add_argument('-mid_save', '--mid_save', action="store_true")
     parser.add_argument('-permu', '--permutation_feature_flag', action="store_true")
+    parser.add_argument('-tta', '--num_tta', type=int, default=1)
+    parser.add_argument('-img_size', '--img_size', type=int, default=320)
+    parser.add_argument('-pseudo', '--pseudo_labeling', action="store_true")
+    parser.add_argument('-salient', '--salient_flag', action="store_true")
+    parser.add_argument('-ssl', '--ssl_flag', action="store_true")
+    parser.add_argument('-model', '--model_name', choices=['efficientnet_b1','resnet18','vit_small_patch16_224',] )
+
+
 
 
     args=parser.parse_args()

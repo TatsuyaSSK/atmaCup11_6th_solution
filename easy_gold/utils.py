@@ -10,8 +10,7 @@ import numpy as np # linear algebra
 import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 from tqdm import tqdm_notebook as tqdm
 import pickle
-#from catboost import CatBoostRegressor
-#from catboost import CatBoostClassifier
+
 import time
 from datetime import datetime, timedelta
 from sklearn.metrics import confusion_matrix
@@ -66,12 +65,13 @@ import sqlite3
 
 #from tsfresh.utilities.dataframe_functions import roll_time_series
 #from tsfresh import extract_features
-
+SEED_NUMBER=2020
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
-set_seed(2020)
+set_seed(SEED_NUMBER)
 
 pd.set_option('display.max_columns', 5000)
 pd.set_option('display.max_rows', 1000)
@@ -228,46 +228,30 @@ def timer(name):
     print(f'[{name}] done in {time.time() - t0:.6f} s')
     
 
-# def meltTFfeatures(df, df_features, column_id="id", column_sort="time"):
-#     df_features = df_features.reset_index()
-#     df_features[column_sort] = df_features["id"].map(lambda x: int(x.split(",")[1].replace("timeshift=", "")))
-#     df_features[column_id] = df_features["id"].map(lambda x: int(x.split(",")[0].replace("id=", "")))
+    
+def compHist(np_oof, np_y_pred, np_y_true, title_str):
 
-#     if column_id != "id":
-#         df_features.drop(columns=["id"], inplace=True)
-    
-#     #print(df_features[["id", "date", "x__variation_coefficient"]])
-    
-#     df = pd.merge(df, df_features, on=[column_id, column_sort], how='left')
-#     return df
+    np_list = [np_oof, np_y_true, np_y_pred]
+    label_list = ["oof", "true", "pred"]
+    color_list = ['red', 'blue', 'green']
 
-# def createRollingFeaturesByTSFresh(df_full, target_list=[], column_id="id", column_sort="date", max_timeshift=28):
-    
-#     target_list.append(column_id)
-#     target_list.append(column_sort)
-    
-#     df = df_full[target_list]
-#     df_rolled = roll_time_series(df, column_id=column_id, column_sort=column_sort, max_timeshift=max_timeshift, disable_progressbar=False)
-#     #print(df_rolled)
-    
-#     df_features = extract_features(df_rolled, column_id=column_id, column_sort=column_sort, disable_progressbar=False)
-    
-#     #print(df_features)
-    
-    
-      
-#     df = meltTFfeatures(df, df_features, column_id=column_id, column_sort=column_sort)
-    
-#     del df_rolled, df_features
-#     gc.collect()
-    
-#     return df
-    
+    for np_data, label, color in zip(np_list, label_list, color_list):
+        
+        sns.distplot(
+            np_data,
+            #bins=sturges(len(data)),
+            color=color,
+            kde=True,
+            label=label
+        )
 
-def compPredTarget(y_pred, y_true, index_list, title_str="oof_diff", lm_flag=False):
-        # model.fit(self.valid_train_X, self.valid_train_y)
-        # valid_train_pred = model.predict(self.valid_train_X)
-        # valid_test_pred = model.predict(self.valid_test_X)
+
+    plt.savefig(str(PATH_TO_GRAPH_DIR / f"{title_str}_compHist.png"))
+    plt.close()
+
+
+def compPredTarget(y_pred, y_true, index_list, title_str, lm_flag=False):
+
 
     
         df_total = pd.DataFrame({"Prediction" : y_pred.flatten(),
@@ -278,31 +262,24 @@ def compPredTarget(y_pred, y_true, index_list, title_str="oof_diff", lm_flag=Fal
         
         print(df_total)
     
-        # df_tmp2 = pd.DataFrame({"Prediction" : valid_test_pred,
-        #                        "Target" : self.valid_test_y,
-        #                        "Difference" : np.abs(valid_test_pred - self.valid_test_y),
-        #                        "type" : np.full(len(valid_test_pred), "valid_test")
-        #                        })
-    
-        #df_total = pd.concat([df_tmp1, df_tmp2], sort=True)
+
         print("Difference > 0.1 : ", df_total[np.abs(df_total["Difference"]) > 0.1].Difference.count())
         #print(df_total[df_total["type"]=="valid_train"].Difference)
         
         fig = plt.figure()
-        sns.distplot(df_total.Difference,bins=10)
-        #sns.distplot(df_total[df_total["type"]=="valid_test"].Difference, bins=10)
-        #plt.show()
-        plt.savefig(os.path.join(str(PATH_TO_GRAPH_DIR), "{}_oof_diff_distfig.png".format(datetime.now().strftime("%Y%m%d_%H%M%S"))))
+        sns.displot(df_total.Difference,bins=10)
+        plt.savefig(str(PATH_TO_GRAPH_DIR / f"{title_str}_oof_diff_distplot.png"))
         plt.close()
         
+        #pdb.set_trace()
+
         if lm_flag:
             plt.figure()
             fig2 = sns.lmplot(x="Target", y="Prediction", data=df_total, palette="Set1")
             #fig.set_axis_labels('target', 'pred')
             plt.title(title_str)
             plt.tight_layout()
-            #plt.show()
-            plt.savefig(os.path.join(str(PATH_TO_GRAPH_DIR), "{}_oof_diff_fig.png".format(datetime.now().strftime("%Y%m%d_%H%M%S"))))
+            plt.savefig(str(PATH_TO_GRAPH_DIR / f"{title_str}_oof_true_lm.png"))
                 
             plt.close()
 
@@ -1565,6 +1542,23 @@ def TestReduceALL():
     x = np.array([[[0, 0, 0], [1, 0, 3], [2, 2, 2]], [[0, 0, 0], [0, 0, 0], [1, 0, 3]]])
 
     pdb.set_trace()
+
+
+def searchCheckptFile(ppath_to_save_dir, ppath_to_model, prefix):
+
+    model_name = ppath_to_model.stem.split("__")[-1]
+
+    fold_num = int(prefix.replace("fold_", ""))
+    ckpt_name = f"{model_name}_train_model.ckpt"
+    if fold_num > 0:
+        ckpt_name = ckpt_name.replace(".ckpt", f"-v{fold_num}.ckpt")
+    #multiLabelNet_train_model-v4.ckpt
+
+    return ppath_to_save_dir/ckpt_name
+
+def numpy_normalize(v):
+
+    return v/np.linalg.norm(v)
     
 if __name__ == '__main__':
     TestReduceALL()

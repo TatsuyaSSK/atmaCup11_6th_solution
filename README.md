@@ -50,7 +50,7 @@ $ python preprocess.py -f
 
 
 ### step.2
-* EfficientNet_b1による学習と推論
+* EfficientNet-B1による学習と推論
 
 ```bash
 $ python train.py -model efficientnet_b1 -lr 0.001 -tta 5 -img_size 512  -ep 1000 -es 200 -batch 32
